@@ -34,7 +34,9 @@ Truth rules (carry these into every answer):
   identity merges. Same spelling/case/underscore conventions are insufficient.
 - Ripwire impact is a transitive-reachability floor, never authoritative change
   impact. Human/design annotations are non-canonical by default.
-- Runtime OBSERVED evidence must not be upgraded to static MUST.
+- Runtime OBSERVED evidence must not be upgraded to static MUST or PRESENT.
+- NOT_OBSERVED in one bounded run does not mean NEVER_EXECUTED.
+- An Agent claim, Git commit, or merge is not a verified fact or Canonical CURRENT.
 - Canonical Evidence = code-derived truth (OBSERVED facts). Design / Suggested / Flow Region are NOT Canonical Evidence.
 - PARTIAL != COMPLETE. UNKNOWN != FALSE. Never upgrade or guess.
 - An unresolved call target must stay UNKNOWN — do NOT invent the real function.

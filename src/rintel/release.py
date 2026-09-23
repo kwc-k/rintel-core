@@ -109,7 +109,45 @@ def capability_report() -> dict:
             "postgresql": item(postgres, "Set RINTEL_DATABASE_URL for the advanced PostgreSQL backend"),
             "browser_e2e": item(browser_ready, "Optional browser tests require @playwright/test and Chrome or Chromium", str(browser_root)),
         },
+        "mcp": mcp_capability_report(),
     }
+
+
+def mcp_capability_report() -> dict:
+    """Exercise installed imports and datastore access, not just file existence."""
+    from .mcp.presets import PRESETS
+    try:
+        configure_local_paths()
+        from .mcp.instructions import INSTRUCTIONS
+        from .mcp.server import EXPOSURE_ENV, PROTOCOL_VERSION, TOOLS
+        from .server.deps import build_store
+        from .server.settings import get_settings
+        get_settings.cache_clear()
+        settings = get_settings()
+        raw = os.environ.get(EXPOSURE_ENV)
+        surface = ([part.strip() for part in raw.split(",") if part.strip()]
+                   if raw else list(PRESETS["read"]))
+        unknown = set(surface) - TOOLS.keys()
+        if not surface or unknown:
+            raise ValueError(f"invalid {EXPOSURE_ENV}: {', '.join(sorted(unknown)) or 'empty surface'}")
+        if not INSTRUCTIONS.strip():
+            raise ValueError("canonical MCP instructions are empty")
+        product_store = build_store()
+        try:
+            product_store.repos()
+        finally:
+            product_store.close()
+        kind = "PostgreSQL" if settings.database_url else "SQLite"
+        identity = ("configured RINTEL_DATABASE_URL" if settings.database_url
+                    else str(Path(settings.sqlite_path).resolve()))
+        return {"status": "READY", "protocol": PROTOCOL_VERSION,
+                "datastore": identity, "datastore_kind": kind,
+                "tool_surface": surface, "instructions": "loaded",
+                "why": "installed MCP runtime and product datastore opened successfully"}
+    except Exception as exc:  # doctor must explain normal setup failures without a traceback
+        return {"status": "NOT_READY", "protocol": None, "datastore": None,
+                "datastore_kind": None, "tool_surface": [], "instructions": "unavailable",
+                "why": f"{type(exc).__name__}: {exc}"}
 
 
 def doctor(*, json_output: bool = False) -> None:
@@ -121,6 +159,37 @@ def doctor(*, json_output: bool = False) -> None:
         print(f"{group} capabilities:")
         for name, value in report[group].items():
             print(f"  {name}: {value['status']} — {value['why']}")
+    mcp = report["mcp"]
+    print(f"MCP server: {mcp['status']} — {mcp['why']}")
+    print(f"  protocol: {mcp['protocol']}; datastore: {mcp['datastore']} "
+          f"({mcp['datastore_kind']}); instructions: {mcp['instructions']}")
+    print(f"  tool surface: {', '.join(mcp['tool_surface'])}")
+
+
+def serve_mcp(*, preset: str | None = None) -> None:
+    """Run the installed stdio MCP server against the UI's datastore."""
+    if sys.version_info < (3, 12):
+        raise RuntimeError("Python 3.12+ is required. Run ./install.sh with uv available.")
+    from .mcp.presets import PRESETS
+    from .mcp.server import EXPOSURE_ENV, TOOLS, run
+    if preset is not None and preset not in PRESETS:
+        raise ValueError(f"unknown MCP preset: {preset}")
+    if preset is not None and os.environ.get(EXPOSURE_ENV):
+        raise ValueError(f"--preset conflicts with {EXPOSURE_ENV}; choose one exposure policy")
+    if preset is not None or not os.environ.get(EXPOSURE_ENV):
+        os.environ[EXPOSURE_ENV] = ",".join(PRESETS[preset or "read"])
+    selected = {name.strip() for name in os.environ[EXPOSURE_ENV].split(",") if name.strip()}
+    unknown = selected - TOOLS.keys()
+    if not selected or unknown:
+        raise ValueError(f"invalid {EXPOSURE_ENV}: {', '.join(sorted(unknown)) or 'empty surface'}")
+    configure_local_paths()
+    from .server.deps import build_store
+    from .server.settings import get_settings
+    get_settings.cache_clear()
+    product_store = build_store()
+    product_store.close()
+    os.environ["RINTEL_MCP_LOCAL_RELEASE"] = "1"
+    run()
 
 
 def serve(*, port: int = 8000, open_browser: bool = True) -> None:
