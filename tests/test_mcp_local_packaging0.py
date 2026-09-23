@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 import socket
 import subprocess
@@ -225,6 +226,26 @@ def test_installed_cli_mcp_entrypoint(tmp_path: Path):
                             capture_output=True, text=True, timeout=30, check=True)
     assert json.loads(result.stdout)["result"]["instructions"]
     assert (tmp_path / "installed-cli-data" / "evidence.db").is_file()
+
+
+def test_default_local_datastore_path(tmp_path: Path):
+    env = os.environ.copy()
+    for key in ("PYTHONPATH", "RINTEL_DATA_HOME", "RINTEL_DATABASE_URL",
+                "RINTEL_SQLITE_PATH", "XDG_DATA_HOME"):
+        env.pop(key, None)
+    env["HOME"] = str(tmp_path)
+    if sys.platform == "darwin":
+        expected = tmp_path / "Library" / "Application Support" / "Rintel" / "evidence.db"
+    else:
+        env["XDG_DATA_HOME"] = str(tmp_path / "xdg")
+        expected = tmp_path / "xdg" / "rintel" / "evidence.db"
+    result = subprocess.run([str(ROOT / "rintel"), "doctor", "--json"],
+                            cwd=ROOT, env=env, capture_output=True, text=True,
+                            timeout=60, check=True)
+    report = json.loads(result.stdout)
+    assert report["mcp"]["status"] == "READY"
+    assert report["mcp"]["datastore"] == str(expected)
+    assert expected.is_file()
 
 
 def test_design_preset_only_explicitly_exposes_bounded_tools(tmp_path: Path):
