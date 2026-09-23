@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rintel.dev/protocol/rpp-v1.schema.json",
+  "title": "Rintel Provider Protocol v1",
+  "description": "Language-neutral JSON Lines messages between the Rintel Host and an external Provider process.",
+  "oneOf": [
+    {"$ref": "#/$defs/hello"},
+    {"$ref": "#/$defs/hello_ack"},
+    {"$ref": "#/$defs/analyze"},
+    {"$ref": "#/$defs/analysis_started"},
+    {"$ref": "#/$defs/fact_batch"},
+    {"$ref": "#/$defs/analysis_complete"},
+    {"$ref": "#/$defs/cancel"},
+    {"$ref": "#/$defs/cancelled"},
+    {"$ref": "#/$defs/shutdown"},
+    {"$ref": "#/$defs/shutdown_ack"},
+    {"$ref": "#/$defs/protocol_error"}
+  ],
+  "$defs": {
+    "protocol_version": {"const": "rpp/1"},
+    "local_entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_id", "kind", "name", "qualified_name", "path", "language"],
+      "properties": {
+        "local_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "qualified_name": {"type": "string", "minLength": 1},
+        "path": {"type": "string"},
+        "language": {"type": "string"}
+      }
+    },
+    "source_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "start_line", "start_column", "end_line", "end_column", "span_kind", "precision"],
+      "properties": {
+        "file": {"type": ["string", "null"]},
+        "start_line": {"type": ["integer", "null"], "minimum": 1},
+        "start_column": {"type": ["integer", "null"], "minimum": 1},
+        "end_line": {"type": ["integer", "null"], "minimum": 1},
+        "end_column": {"type": ["integer", "null"], "minimum": 1},
+        "span_kind": {"type": "string", "minLength": 1},
+        "precision": {"enum": ["EXACT", "LINE_ONLY", "PARTIAL", "UNKNOWN"]}
+      }
+    },
+    "candidate_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_fact_id", "kind", "subject", "predicate", "object", "source_span", "claim"],
+      "properties": {
+        "provider_fact_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "subject": {"$ref": "#/$defs/local_entity"},
+        "predicate": {"type": "string", "minLength": 1},
+        "object": {
+          "type": "object",
+          "additionalProperties": false,
+          "oneOf": [
+            {"required": ["entity"], "properties": {"entity": {"$ref": "#/$defs/local_entity"}}},
+            {"required": ["candidates"], "properties": {"candidates": {"type": "array", "items": {"$ref": "#/$defs/local_entity"}}}},
+            {"required": ["literal"], "properties": {"literal": {}}},
+            {"required": ["none"], "properties": {"none": {"const": true}}}
+          ]
+        },
+        "source_span": {"$ref": "#/$defs/source_span"},
+        "claim": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observation_basis", "execution_modality"],
+          "properties": {
+            "observation_basis": {"enum": ["DIRECT", "DERIVED", "HEURISTIC"]},
+            "execution_modality": {"enum": ["MUST", "MAY", "UNKNOWN"]}
+          }
+        }
+      }
+    },
+    "incremental_capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modes", "accepts_changed_scope", "reports_invalidated_scope", "reports_dependency_manifest", "reports_semantic_digest", "reports_reuse_source"],
+      "properties": {
+        "modes": {"type": "array", "items": {"enum": ["NONE", "NO_CHANGE", "FILE_LOCAL", "DEPENDENCY_AWARE", "SEMANTIC_CUTOFF"]}},
+        "accepts_changed_scope": {"type": "boolean"},
+        "reports_invalidated_scope": {"type": "boolean"},
+        "reports_dependency_manifest": {"type": "boolean"},
+        "reports_semantic_digest": {"type": "boolean"},
+        "reports_reuse_source": {"type": "boolean"}
+      }
+    },
+    "build_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defines", "include_paths", "compiler_flags", "language_standard", "target"],
+      "properties": {
+        "defines": {"type": "array", "items": {"type": "string"}},
+        "include_paths": {"type": "array", "items": {"type": "string"}},
+        "compiler_flags": {"type": "array", "items": {"type": "string"}},
+        "language_standard": {"type": "string"},
+        "target": {"type": "string"}
+      }
+    },
+    "cutoff_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason_required", "reuse_source_required_when_reused"],
+      "properties": {
+        "reason_required": {"const": true},
+        "reuse_source_required_when_reused": {"const": true}
+      }
+    },
+    "analysis_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_id", "repo_id", "repo_snapshot", "root",
+        "provider_id", "provider_version", "provider_config",
+        "provider_config_digest", "build_context_id", "build_context",
+        "input_content_digest", "semantic_digest",
+        "semantic_identity_schema_version", "changed_scope",
+        "invalidated_scope", "dependency_manifest_digest",
+        "dependency_manifest",
+        "incremental_capability", "cache_identity", "cutoff_contract",
+        "projection_identity", "projection_version", "publication_policy"
+      ],
+      "properties": {
+        "analysis_id": {"type": "string", "minLength": 1},
+        "repo_id": {"type": "string", "minLength": 1},
+        "repo_snapshot": {"type": "string", "minLength": 1},
+        "root": {"type": "string", "minLength": 1},
+        "provider_id": {"type": "string", "minLength": 1},
+        "provider_version": {"type": "string", "minLength": 1},
+        "provider_config": {"type": "object"},
+        "provider_config_digest": {"type": "string", "minLength": 1},
+        "build_context_id": {"type": "string", "minLength": 1},
+        "build_context": {"$ref": "#/$defs/build_context"},
+        "input_content_digest": {"type": "string", "minLength": 1},
+        "semantic_digest": {"type": ["string", "null"]},
+        "semantic_identity_schema_version": {"type": "string", "minLength": 1},
+        "changed_scope": {"type": "array", "items": {"type": "string"}},
+        "invalidated_scope": {"type": "array", "items": {"type": "string"}},
+        "dependency_manifest": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {"type": "string"},
+            "uniqueItems": true
+          }
+        },
+        "dependency_manifest_digest": {"type": "string", "minLength": 1},
+        "incremental_capability": {"$ref": "#/$defs/incremental_capability"},
+        "cache_identity": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "cutoff_contract": {"$ref": "#/$defs/cutoff_contract"},
+        "projection_identity": {"type": "string", "minLength": 1},
+        "projection_version": {"type": "string", "minLength": 1},
+        "publication_policy": {"enum": ["REQUIRE_COMPLETE", "STAGE_ONLY"]}
+      }
+    },
+    "advertisement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_id", "provider_version", "provider_kind", "provider_config_digest", "languages", "capabilities", "incremental_capability"],
+      "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "provider_version": {"type": "string", "minLength": 1},
+        "provider_kind": {"type": "string", "minLength": 1},
+        "provider_config_digest": {"type": "string", "minLength": 1},
+        "languages": {"type": "array", "items": {"type": "string"}},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "incremental_capability": {"$ref": "#/$defs/incremental_capability"}
+      }
+    },
+    "run_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "scope", "capabilities_observed", "limitations"],
+      "properties": {
+        "level": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+        "scope": {"type": "array", "items": {"type": "string"}},
+        "capabilities_observed": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "hello": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol_version", "type", "host", "authority"],
+      "properties": {
+        "protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "hello"},
+        "host": {"type": "string", "minLength": 1},
+        "authority": {"const": "RINTEL_CANONICAL_ONLY"}
+      }
+    },
+    "hello_ack": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol_version", "type", "process_id", "advertisement"],
+      "properties": {
+        "protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "hello_ack"},
+        "process_id": {"type": "integer", "minimum": 1},
+        "advertisement": {"$ref": "#/$defs/advertisement"}
+      }
+    },
+    "analyze": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol_version", "type", "contract"],
+      "properties": {
+        "protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "analyze"},
+        "contract": {"$ref": "#/$defs/analysis_contract"}
+      }
+    },
+    "analysis_started": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol_version", "type", "analysis_id"],
+      "properties": {
+        "protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "analysis_started"},
+        "analysis_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "fact_batch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol_version", "type", "analysis_id", "sequence", "facts"],
+      "properties": {
+        "protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "fact_batch"},
+        "analysis_id": {"type": "string", "minLength": 1},
+        "sequence": {"type": "integer", "minimum": 0},
+        "facts": {"type": "array", "minItems": 1, "maxItems": 1000, "items": {"$ref": "#/$defs/candidate_fact"}}
+      }
+    },
+    "analysis_complete": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol_version", "type", "analysis_id", "status", "batch_count", "fact_count", "coverage", "incremental_result"],
+      "properties": {
+        "protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "analysis_complete"},
+        "analysis_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["COMPLETE", "PARTIAL", "FAILED"]},
+        "batch_count": {"type": "integer", "minimum": 0},
+        "fact_count": {"type": "integer", "minimum": 0},
+        "coverage": {"$ref": "#/$defs/run_coverage"},
+        "incremental_result": {
+          "type": "object", "additionalProperties": false,
+          "required": ["semantic_digest", "semantic_identity_schema_version", "invalidated_scope", "dependency_manifest_digest", "cache_identity", "cutoff_reason", "reuse_source", "projection_identity", "projection_version"],
+          "properties": {
+            "semantic_digest": {"type": ["string", "null"]},
+            "semantic_identity_schema_version": {"type": "string"},
+            "invalidated_scope": {"type": "array", "items": {"type": "string"}},
+            "dependency_manifest_digest": {"type": "string"},
+            "cache_identity": {"type": "string"},
+            "cutoff_reason": {
+              "enum": ["NONE", "NO_CHANGE", "SEMANTIC_UNCHANGED", "DEPENDENCY_UNAFFECTED", "CACHE_HIT"]
+            },
+            "reuse_source": {"type": ["string", "null"]},
+            "projection_identity": {"type": "string"},
+            "projection_version": {"type": "string"}
+          }
+        }
+      }
+    },
+    "cancel": {"type": "object", "additionalProperties": false, "required": ["protocol_version", "type", "analysis_id"], "properties": {"protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "cancel"}, "analysis_id": {"type": "string"}}},
+    "cancelled": {"type": "object", "additionalProperties": false, "required": ["protocol_version", "type", "analysis_id"], "properties": {"protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "cancelled"}, "analysis_id": {"type": "string"}}},
+    "shutdown": {"type": "object", "additionalProperties": false, "required": ["protocol_version", "type"], "properties": {"protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "shutdown"}}},
+    "shutdown_ack": {"type": "object", "additionalProperties": false, "required": ["protocol_version", "type"], "properties": {"protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "shutdown_ack"}}},
+    "protocol_error": {"type": "object", "additionalProperties": false, "required": ["protocol_version", "type", "code", "message"], "properties": {"protocol_version": {"$ref": "#/$defs/protocol_version"}, "type": {"const": "protocol_error"}, "code": {"type": "string"}, "message": {"type": "string"}}}
+  }
+}

@@ -1,0 +1,395 @@
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --surface: #ffffff;
+  --hover: #f0f2f5;
+  --border: #e2e5ea;
+  --border-strong: #c9ced6;
+  --text: #1f2430;
+  --text-muted: #6b7280;
+  --accent: #2563eb;
+  --accent-soft: #eff4ff;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --warn-bg: #fff7e6;
+  --ok-bg: #e8f7ee;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --mono: "SFMono-Regular", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  /* THEME0: view surfaces that must adapt (X6 canvases, nodes, editors) */
+  --canvas-bg: #fafbfc;
+  --node-bg: #ffffff;
+  --node-border: #d1d5db;
+  --module-bg: #f8fafc;
+  --file-bg: #f8fafc;
+  --resource-bg: #f0fdf4;
+  --unknown-bg: #fafafa;
+  --sugg-bg: #fffbeb;
+  --sugg-border: #f59e0b;
+  --edge-bg: rgba(255, 255, 255, 0.9);
+  --edge-stroke: #94a3b8;
+  --chip-bg: #f1f5f9;
+  --chip-text: #475569;
+  --amber-bg: #fef3c7;
+  --amber-text: #92400e;
+  /* THEME0: highlight (selection) + tinted tags */
+  --sel-bg: rgba(37, 99, 235, 0.18);
+  --sel-text: #1f2430;
+  --violet-bg: #f5f0ff;
+  --violet-text: #6d28d9;
+  /* TOPO-EDITOR-UX0 §17: unified token aliases (canonical names).  All
+     components must reference these; per-component hardcoding is banned. */
+  --app-bg: var(--bg);
+  --panel-bg: var(--panel);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
+  /* edge/relation kinds — WORKBENCH §27 canonical hues (color = aid only) */
+  --relation-call: #6366f1;      /* CALL  purple/blue */
+  --relation-data: #0891b2;      /* DATA  cyan        */
+  --relation-state: #7c3aed;     /* STATE violet      */
+  --relation-control: #ea580c;   /* CONTROL orange    */
+  --relation-time: #64748b;      /* TIME   blue-gray  */
+  --relation-resource: #16a34a;  /* RESOURCE green    */
+  --topo-call: var(--relation-call);
+  --topo-data: var(--relation-data);
+  --topo-state: var(--relation-state);
+  --topo-control: var(--relation-control);
+  --topo-time: var(--relation-time);
+  --topo-resource: var(--relation-resource);
+  /* status */
+  --status-success: var(--ok);
+  --status-warning: var(--warn);
+  --status-error: var(--danger);
+  --status-unknown: var(--text-muted);
+}
+
+/* THEME0 dark palette — every surface switches via these variables. */
+[data-theme="dark"] {
+  --bg: #141519;
+  --panel: #1c1e23;
+  --surface: #1f2127;
+  --hover: #26292f;
+  --border: #30333a;
+  --border-strong: #3d414a;
+  --text: #e8eaf0;
+  --text-muted: #9ca3af;
+  --accent: #4f83f1;
+  --accent-soft: #20304d;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --warn-bg: #3a2f12;
+  --ok-bg: #14301f;
+  --danger: #f87171;
+  --danger-bg: #3b1d1d;
+  --canvas-bg: #17181d;
+  --node-bg: #23252b;
+  --node-border: #3a3e46;
+  --module-bg: #1f2127;
+  --file-bg: #1f2127;
+  --resource-bg: #14261f;
+  --unknown-bg: #232323;
+  --sugg-bg: #2c2413;
+  --sugg-border: #b7791f;
+  --edge-bg: rgba(28, 30, 35, 0.92);
+  --edge-stroke: #64748b;
+  --chip-bg: #2b2e35;
+  --chip-text: #b6bcc8;
+  --amber-bg: #3a2f12;
+  --amber-text: #f5c96b;
+  --sel-bg: rgba(79, 131, 241, 0.32);
+  --sel-text: #e8eaf0;
+  --violet-bg: #2a2140;
+  --violet-text: #c4b5fd;
+  --app-bg: var(--bg);
+  --panel-bg: var(--panel);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
+  /* edge/relation kinds — WORKBENCH §27 canonical hues (color = aid only) */
+  --relation-call: #a5b4fc;
+  --relation-data: #22d3ee;
+  --relation-state: #c4b5fd;
+  --relation-control: #fb923c;
+  --relation-time: #94a3b8;
+  --relation-resource: #4ade80;
+  --topo-call: var(--relation-call);
+  --topo-data: var(--relation-data);
+  --topo-state: var(--relation-state);
+  --topo-control: var(--relation-control);
+  --topo-time: var(--relation-time);
+  --topo-resource: var(--relation-resource);
+  --status-success: var(--ok);
+  --status-warning: var(--warn);
+  --status-error: var(--danger);
+  --status-unknown: var(--text-muted);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--mono);
+}
+
+button {
+  font-family: inherit;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+input[type="text"],
+input[type="search"],
+input:not([type]),
+select {
+  font-family: inherit;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 4px 8px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+}
+
+input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+/* THEME0: text selection must never render as light-blue + black text
+   in dark mode (browser default).  Vars resolve against the selected
+   element's theme, so one rule covers both palettes. */
+::selection {
+  background: var(--sel-bg);
+  color: var(--sel-text);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.panel-body {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row.selected {
+  background: var(--accent-soft);
+  outline: 1px solid rgba(37, 99, 235, 0.35);
+}
+
+.row.focused {
+  background: var(--amber-bg);
+  color: var(--amber-text);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.badge.ok {
+  background: var(--resource-bg);
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.badge.warn {
+  background: var(--amber-bg);
+  color: var(--warn);
+  border-color: var(--sugg-border);
+}
+
+.badge.err {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--chip-bg);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+/* THEME0: X6 edge labels — CSS wins over SVG presentation attributes,
+   so labels re-theme instantly (no canvas rebuild needed). */
+.x6-edge-label rect {
+  fill: var(--edge-bg) !important;
+  stroke: var(--border);
+}
+.x6-edge-label text {
+  fill: var(--text-muted) !important;
+}
+
+/* =====================================================================
+   UI-REALITY-ALIGN0 §10-§13/§26: truth visual language + density.
+   Every badge pairs COLOR with a glyph + text + tooltip; color alone is
+   never the carrier of meaning.  Planes (static / observed / design /
+   annotation / probe) get their own line style so edges never blur.
+   ===================================================================== */
+:root {
+  --truth-observed: #0e7490;
+  --truth-observed-bg: #ecfeff;
+  --truth-resolved: #1d4ed8;
+  --truth-resolved-bg: #eef2ff;
+  --truth-derived: #7c3aed;
+  --truth-derived-bg: #f5f0ff;
+  --truth-heuristic: #b45309;
+  --truth-heuristic-bg: #fff7e6;
+  --truth-unknown: #6b7280;
+  --truth-unknown-bg: #f1f5f9;
+  --truth-partial: #b45309;
+  --truth-partial-bg: #fef3c7;
+  --truth-complete: #15803d;
+  --truth-complete-bg: #e8f7ee;
+  --plane-design: #db2777;
+  --plane-annotation: #7c3aed;
+  --plane-probe: #0891b2;
+  --rail-bg: var(--panel);
+  --density-row: 22px;
+  --density-font: 12px;
+}
+[data-theme="dark"] {
+  --truth-observed: #67e8f9;
+  --truth-observed-bg: #0d2b33;
+  --truth-resolved: #a5b4fc;
+  --truth-resolved-bg: #1e2440;
+  --truth-derived: #c4b5fd;
+  --truth-derived-bg: #2a2140;
+  --truth-heuristic: #f5c96b;
+  --truth-heuristic-bg: #3a2f12;
+  --truth-unknown: #9ca3af;
+  --truth-unknown-bg: #2b2e35;
+  --truth-partial: #f5c96b;
+  --truth-partial-bg: #3a2f12;
+  --truth-complete: #4ade80;
+  --truth-complete-bg: #14301f;
+  --plane-design: #f9a8d4;
+  --plane-annotation: #c4b5fd;
+  --plane-probe: #22d3ee;
+}
+/* §26 density: ONE switch, no settings sprawl. */
+[data-density="compact"] {
+  --density-row: 17px;
+  --density-font: 11px;
+}
+[data-density="compact"] .wb-panel-body,
+[data-density="compact"] .insp-body { font-size: 11px; }

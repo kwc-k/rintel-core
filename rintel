@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+unset PYTHONPATH VIRTUAL_ENV
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+if [ ! -x "$project_dir/.venv/bin/rintel" ]; then
+    printf 'Rintel is not installed. Run ./install.sh first.\n' >&2
+    exit 1
+fi
+exec "$project_dir/.venv/bin/rintel" "$@"

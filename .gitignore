@@ -1,0 +1,15 @@
+__pycache__/
+.DS_Store
+*.pyc
+.venv/
+.uv-cache/
+.uv-python/
+.rintel-toolchains/
+.scratch/
+web/node_modules/
+web/dist/
+*.db
+*.db-wal
+*.db-shm
+results/*.jsonl
+!results/.gitkeep
