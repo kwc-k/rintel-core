@@ -1,0 +1,18 @@
+{
+  "node": "MCP-LOCAL-PACKAGING0",
+  "blocking_issues": [],
+  "nonblocking_issues": [
+    {
+      "id": "MCP-LP-001",
+      "status": "DOCUMENTED_LIMITATION",
+      "description": "A historical source-workspace MCP topology test expects the fac_c frozen artifact, which is not part of the v0.1.0 public source archive. In the earlier targeted historical run, 10 of 11 selected error-contract tests passed and this artifact-specific assertion failed. The release-published Store path has separate real Python/C tests on both platforms.",
+      "scope_decision": "Do not add FAC artifacts or rewrite historical semantics in a local packaging node."
+    },
+    {
+      "id": "MCP-LP-002",
+      "status": "UNCONFIRMED_OBSERVATION",
+      "description": "One earlier HTTP registration smoke saw a transient 404 when polling a job receipt. Polling the repository's published latest_snapshot succeeded, and the fresh registration/index/MCP witness passed on both platforms.",
+      "scope_decision": "Not attributed to MCP; no job subsystem change without a reproducer."
+    }
+  ]
+}

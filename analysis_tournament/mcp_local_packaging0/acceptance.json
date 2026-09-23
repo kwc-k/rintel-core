@@ -1,0 +1,53 @@
+{
+  "node": "MCP-LOCAL-PACKAGING0",
+  "verdict": "PASS / FROZEN",
+  "release_baseline": "4f27dc2e106ef8cfdeeb66c91333728e88dcc5c5",
+  "implementation_commit": "c65d239717af211551889e7a6b80613b0f93c42f",
+  "exact_source_archive_sha256": "fb8681cb4be96e28677ee1818e66f4da718bc75691d33cb5608808a09dab5b16",
+  "archive_command": "git archive --format=tar.gz --output=<archive> c65d239717af211551889e7a6b80613b0f93c42f",
+  "platforms": {
+    "macos_arm64": {
+      "source_archive_sha256_verified": true,
+      "clean_install": "PASS",
+      "doctor_mcp": "READY",
+      "fresh_python_c_repository_tests": "10 passed",
+      "python": "3.12.13",
+      "datastore": "SQLite"
+    },
+    "linux_x86_64": {
+      "source_archive_sha256_verified": true,
+      "clean_install": "PASS",
+      "doctor_mcp": "READY",
+      "fresh_python_c_repository_tests": "10 passed",
+      "python": "3.12.14",
+      "datastore": "SQLite",
+      "optional_clang": "UNAVAILABLE; did not block MCP or the C tree-sitter witness"
+    }
+  },
+  "gates": {
+    "MCP1": "PASS: ./rintel mcp and installed .venv/bin/rintel mcp initialize from clean install",
+    "MCP2": "PASS: no pgserver import or undeclared runtime dependency in MCP startup",
+    "MCP3": "PASS: serve and MCP use configure_local_paths plus server.deps.build_store; default paths and RINTEL_DATA_HOME tested",
+    "MCP4": "PASS: initialize returns src/rintel/mcp/instructions.py verbatim",
+    "MCP5": "PASS: tools/list matches actual exposure; resources/list and resources/read obey read_resource exposure",
+    "MCP6": "PASS: default read preset exposes the 11 required read/analyze tools",
+    "MCP7": "PASS: design-execute explicitly adds only seven existing bounded tools; no shell, publication or approval tool",
+    "MCP8": "PASS: published and unindexed repository status read from real product Store",
+    "MCP9": "PASS: Python and C indexed symbols discoverable by search_symbols/get_symbol",
+    "MCP10": "PASS: published CALL topology, exact evidence and snapshot-bound source drilldown",
+    "MCP11": "PASS: simultaneous REST and MCP agree on repo id, snapshot, selected fact, SourceSpan and evidence; running MCP observes later HTTP registration/index",
+    "MCP12": "PASS: instructions and conservative published projection preserve UNKNOWN/PARTIAL and runtime-static boundaries",
+    "MCP13": "PASS: unexposed tool and resource calls fail closed",
+    "MCP14": "PASS: invalid type/URI, unknown/unindexed repo and stale/missing source return structured errors",
+    "MCP15": "PASS: doctor opens actual Store and reports protocol, datastore identity/kind, surface and instruction load",
+    "MCP16": "PASS: exact archive macOS arm64 clean install and 10 focused tests",
+    "MCP17": "PASS: same archive Linux x86_64 clean install and 10 focused tests",
+    "MCP18": "PASS: no new approval, publication or arbitrary command tool; published adapter is read-only"
+  },
+  "test_file": "tests/test_mcp_local_packaging0.py",
+  "limitations": [
+    "The full historical backend suite was not claimed as passing by this focused packaging node.",
+    "A source-workspace historical fac_c topology test requires a frozen lane artifact omitted from the public release archive; the published repository path is tested independently.",
+    "The branch is not merged into main or published as a GitHub release."
+  ]
+}
