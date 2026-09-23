@@ -1,0 +1,23 @@
+{
+  "schema": "guided-mission-map-validation/1",
+  "release_base_sha": "4f27dc2e106ef8cfdeeb66c91333728e88dcc5c5",
+  "scope": "Docs, glossary and mapping evidence only; no tracked production Python/Vue code changed.",
+  "focused_historical_test": {
+    "working_directory": "/Users/wu/Documents/dh/a3/fac/repo-intel",
+    "command": "./.venv312/bin/python -m pytest tests/test_runtime_alignment_evidence0.py::test_real_w1_w2_w4_with_exact_bridge_and_bounded_coverage tests/test_execution_authority0.py -q",
+    "result": "14 passed; one StarletteDeprecationWarning",
+    "boundary": "These original-workspace tests are evidence for existing backend behavior, not tests shipped in the public v0.1.0 source artifact."
+  },
+  "release_source_byte_comparison": {
+    "src/rintel/cross_layer_alignment.py": "cmp equal",
+    "src/rintel/build_recovery.py": "cmp equal",
+    "web/src/views/ChangeWorkspaceView.vue": "cmp equal"
+  },
+  "map_json_validation": "jq schema/required-row-field, viewport and issue checks passed",
+  "viewport": "Real Chrome DOM measurement of existing release UI only; details in viewport_audit.json",
+  "not_run": [
+    "No Guided Mission implementation tests exist yet.",
+    "No new Mission browser E2E or fresh-user transfer test was claimed.",
+    "No full backend suite was run for this docs-only node."
+  ]
+}

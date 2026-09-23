@@ -1,0 +1,215 @@
+{
+  "schema": "guided-mission-integration-map/1",
+  "node": "GUIDED-MISSION-INTEGRATION-MAP0",
+  "base_sha": "4f27dc2e106ef8cfdeeb66c91333728e88dcc5c5",
+  "ux_source": "User-supplied GUIDED-MISSION-UX0 DESIGN_FROZEN text, 2026-09-23; implementation and acceptance NOT STARTED",
+  "classification_meaning": {
+    "REUSE": "Existing production capability or read projection can be used unchanged.",
+    "HOOK": "Add a narrow integration point to an existing surface or read path.",
+    "SMALL_CHANGE": "Bounded product presentation or adapter change; no authority semantics change.",
+    "NEW": "Tutorial-owned contract, state, isolation, or witness packaging not present in v0.1.0.",
+    "OUT_OF_SCOPE": "Explicitly excluded from first-run A/B/C implementation."
+  },
+  "requirements": [
+    {
+      "id": "GM-01", "requirement": "First-run entry, later Help entry, pause/resume/restart/skip (TUX14)",
+      "existing_implementation": "Routes exist but no first-run or Help mission entry; App only renders RouterView.",
+      "location": ["web/src/App.vue:1", "web/src/router.ts:12", "web/src/components/WorkbenchLayout.vue:96"],
+      "classification": "NEW", "required_change": "One route-independent Mission host and tutorial-only session controls; keep Open Repository and Explore independently available.",
+      "owner": "frontend", "truth_authority_risk": "Entry or skip must not publish evidence or imply completion.",
+      "test_requirement": "Fresh-user browser entry, exit, restart and keyboard-only control tests."
+    },
+    {
+      "id": "GM-02", "requirement": "Reuse Explorer, Canvas, Inspector and Dock; no second tutorial product (TUX1)",
+      "existing_implementation": "Normal workbench already composes four surfaces; /topology is a second existing workbench shell and /changes/:id is a separate Change Workspace.",
+      "location": ["web/src/components/WorkbenchLayout.vue:85", "web/src/views/WorkbenchView.vue:272", "web/src/views/ChangeWorkspaceView.vue:280", "web/src/router.ts:10"],
+      "classification": "REUSE", "required_change": "Mount mission presentation across existing routes; do not duplicate a new Explorer/Canvas/Inspector/Dock.",
+      "owner": "frontend", "truth_authority_risk": "A visual overlay must not synthesize evidence.",
+      "test_requirement": "Route traversal retains normal workbench capabilities and no separate tutorial graph appears."
+    },
+    {
+      "id": "GM-03", "requirement": "Persistent compact Mission Strip with semantic milestones, hint, pause and exit; no percentage",
+      "existing_implementation": "TopBar has brand, repository, snapshot, index, topology, Design Changes, language/theme/search; no free 1280px slot.",
+      "location": ["web/src/components/TopBar.vue:14", "web/src/components/TopBar.vue:42"],
+      "classification": "NEW", "required_change": "Add route-level compact strip outside the existing horizontal TopBar; use semantic milestone labels, never percent.",
+      "owner": "frontend", "truth_authority_risk": "Milestone rendering consumes backend MissionState only.",
+      "test_requirement": "1280/1440/1800 layout, keyboard, no color-only status and no local completion state."
+    },
+    {
+      "id": "GM-04", "requirement": "Mission Drawer with why/objective/success/hints/explain/restart/exit",
+      "existing_implementation": "Workbench already has 300px Explorer and 360px Inspector; Change Workspace uses 220px nav and optional 330px Inspector.",
+      "location": ["web/src/components/WorkbenchLayout.vue:166", "web/src/views/ChangeWorkspaceView.vue:578"],
+      "classification": "NEW", "required_change": "Use dismissible overlay or responsive transient region, not a permanent additional grid column; preserve focus and close/escape behavior.",
+      "owner": "frontend", "truth_authority_risk": "Drawer explanations must show source limitations and cannot rename backend states.",
+      "test_requirement": "Viewport geometry plus focus trap/return and non-obscured main controls."
+    },
+    {
+      "id": "GM-05", "requirement": "At most one optional Context Cue after hint request or bounded stall (TUX8)",
+      "existing_implementation": "Existing navigation and evidence controls have no mission cue target contract.",
+      "location": ["web/src/components/WorkbenchLayout.vue:85", "web/src/views/ChangeWorkspaceView.vue:280"],
+      "classification": "HOOK", "required_change": "Add stable target IDs and one cue presenter; cue is advisory, never a completion event.",
+      "owner": "frontend", "truth_authority_risk": "Cue cannot substitute for evidence inspection.",
+      "test_requirement": "One visible cue maximum; keyboard dismissal; no forced click order."
+    },
+    {
+      "id": "GM-06", "requirement": "Proof Card: established, supporting refs, unknowns and why; no gamification (TUX7)",
+      "existing_implementation": "Change Workspace exposes evidence, support receipts, SourceSpan, alignments and limitations but no tutorial proof receipt.",
+      "location": ["web/src/views/ChangeWorkspaceView.vue:383", "web/src/views/ChangeWorkspaceView.vue:553", "src/rintel/design_lifecycle/projection.py:237"],
+      "classification": "NEW", "required_change": "Render backend Proof with immutable source/receipt refs and RemainingUnknowns; no XP, confetti or fabricated overall PASS.",
+      "owner": "shared", "truth_authority_risk": "Proof is a tutorial evaluation receipt, not a canonical support receipt.",
+      "test_requirement": "Backend proof-ref validation and frontend unknown/limitations visibility."
+    },
+    {
+      "id": "GM-07", "requirement": "Authority/truth/resolution/coverage/execution modality remain separate (TUX2/TUX4)",
+      "existing_implementation": "Evidence Inspector exposes all five dimensions and support receipt provenance; truth domain types already separate them.",
+      "location": ["web/src/views/ChangeWorkspaceView.vue:553", "web/src/domain/change-workspace.ts:61", "web/src/domain/truth.ts:1"],
+      "classification": "REUSE", "required_change": "Mission summaries may focus a dimension but must retain links and labels for all five.",
+      "owner": "shared", "truth_authority_risk": "Never reduce dimensions to a single confidence/PASS.",
+      "test_requirement": "Contract tests for partial/unknown and five-dimension UI labels."
+    },
+    {
+      "id": "GM-08", "requirement": "Design/Static/Runtime remain independent, with interpretation below (TUX5/TUX6)",
+      "existing_implementation": "Backend derives each layer independently; Change Workspace currently renders them mainly as dense prose in one row.",
+      "location": ["src/rintel/cross_layer_alignment.py:137", "src/rintel/cross_layer_alignment.py:169", "src/rintel/cross_layer_alignment.py:270", "web/src/views/ChangeWorkspaceView.vue:383"],
+      "classification": "SMALL_CHANGE", "required_change": "Present three labeled columns from the existing alignment projection, followed by the existing derived interpretation; no new resolver.",
+      "owner": "frontend", "truth_authority_risk": "Runtime OBSERVED never rewrites Static UNKNOWN/PRESENT; NOT_OBSERVED never means never executed.",
+      "test_requirement": "W1/W2/W4 rendering and cross-layer contradiction tests."
+    },
+    {
+      "id": "GM-09", "requirement": "Mission A uses frozen real W1 EXPECTED/PRESENT/OBSERVED and supports free-path evidence/source inspection (TUX9)",
+      "existing_implementation": "Historical real W1 source, binary, trace, SQLite graph and bound receipts exist in the source workspace, but are absent from the 354-file public release.",
+      "location": ["src/rintel/cross_layer_alignment.py:487", "src/rintel/design_lifecycle/projection.py:237", "web/src/views/ChangeWorkspaceView.vue:383", "web/src/api/design-lifecycle.ts:172", "historical:analysis_tournament/runtime_alignment_evidence0/w1_observed.json"],
+      "classification": "NEW", "required_change": "Ship or reproducibly construct a checksum-verified, source/binary/build/revision-bound W1 tutorial witness in an isolated tutorial datastore; preserve genuine admission and SourceSpan refs.",
+      "owner": "backend", "truth_authority_risk": "Do not import a trace detached from its exact canonical and binary identity; no fake tutorial evidence.",
+      "test_requirement": "Recreate W1 through public install; verify backend alignment, admissible support, exact source and proof refs."
+    },
+    {
+      "id": "GM-10", "requirement": "Mission B uses real W2 EXPECTED/PRESENT/NOT_OBSERVED and W4 EXPECTED/UNKNOWN/OBSERVED (TUX5/TUX6/TUX9)",
+      "existing_implementation": "Real bounded W2 and W4 witnesses and backend alignment tests exist in the original workspace, not the public release artifact.",
+      "location": ["src/rintel/cross_layer_alignment.py:270", "src/rintel/cross_layer_alignment.py:362", "historical:analysis_tournament/runtime_alignment_evidence0/w2_not_observed.json", "historical:analysis_tournament/runtime_alignment_evidence0/w4_indirect_observed.json"],
+      "classification": "NEW", "required_change": "Package/reconstruct W2 and W4 under the same exact witness identity contract; require an explicit safe-conclusion answer for each.",
+      "owner": "backend", "truth_authority_risk": "W2 negative is bounded to workload/window; W4 static UNKNOWN must remain UNKNOWN.",
+      "test_requirement": "W2 incomplete/mismatched coverage becomes UNMEASURED; W4 runtime does not promote static; invalid MISSING attempt explains missing COMPLETE static certificate."
+    },
+    {
+      "id": "GM-11", "requirement": "Static MISSING only from applicable COMPLETE coverage; UNKNOWN != FALSE (TUX6)",
+      "existing_implementation": "derive_static requires published support for PRESENT and applicable_complete exact-domain certificate for MISSING.",
+      "location": ["src/rintel/cross_layer_alignment.py:169", "src/rintel/coverage_authority/validation.py:1"],
+      "classification": "REUSE", "required_change": "MissionEvaluator reads existing static state and certificate reason; invalid-conclusion response explains PARTIAL/UNKNOWN without mutating it.",
+      "owner": "backend", "truth_authority_risk": "No tutorial-defined negative authority.",
+      "test_requirement": "Reject MISSING on W4 and on absent/mismatched COMPLETE certificate."
+    },
+    {
+      "id": "GM-12", "requirement": "Backend-only goal-based Mission evaluation; UI clicks never complete (TUX3/TUX18)",
+      "existing_implementation": "Existing workbench reads backend projections, but there is no MissionSpec, MissionEvaluator or mission API.",
+      "location": ["src/rintel/server/api/design_lifecycle.py:172", "web/src/api/design-lifecycle.ts:77", "web/src/App.vue:1"],
+      "classification": "NEW", "required_change": "Add thin MissionSpec/Evaluator and versioned API; evaluator re-queries bound backend evidence/receipts and checks a structured user conclusion plus server-issued inspection receipts.",
+      "owner": "backend", "truth_authority_risk": "Client-sent truth, click order, localStorage or unbound refs cannot satisfy a SuccessPredicate.",
+      "test_requirement": "Forged clicks/ref IDs, stale revision, mismatched session and wrong conclusion fail closed; valid alternate navigation paths pass."
+    },
+    {
+      "id": "GM-13", "requirement": "TutorialProgress and GUIDED/ASSISTED/INDEPENDENT are UX-only, reversible (TUX8/TUX11)",
+      "existing_implementation": "No tutorial progress persistence exists; workbench local UI state is not evidence authority.",
+      "location": ["web/src/stores/workspace.ts:18", "src/rintel/evidence_authority/engine.py:1"],
+      "classification": "NEW", "required_change": "Persist namespaced tutorial session/progress apart from canonical/design/evidence tables; INDEPENDENT requires a separate transfer witness, not hint exhaustion.",
+      "owner": "backend", "truth_authority_risk": "Progress never becomes EvidenceCandidate, DesignRevision or authority receipt.",
+      "test_requirement": "Isolation and reset tests; canonical current/revision/support receipt counts unchanged by progress changes."
+    },
+    {
+      "id": "GM-14", "requirement": "Mission C uses isolated Tutorial Workspace + real tutorial Git worktree + bounded datastore (TUX10)",
+      "existing_implementation": "GitWorkspaceManager creates scoped worktrees from a registered Git repo; Rintel_DATA_HOME isolates a datastore but no tutorial-owned workspace provisioning exists.",
+      "location": ["src/rintel/git_workspace.py:141", "src/rintel/release.py:17", "src/rintel/server/api/git_workspace.py:82"],
+      "classification": "NEW", "required_change": "Provision a tutorial-owned source repo/worktree, datastore, artifact roots and allowlisted paths under a dedicated namespace; bind every Change/profile/job to that repo; cleanup only tutorial-owned paths.",
+      "owner": "backend", "truth_authority_risk": "Never point tutorial writes, worktree creation, index or build profiles at a user/production repo or datastore.",
+      "test_requirement": "Sentinel hashes of production repo/datastore before/after, symlink/path traversal and cross-session isolation negatives."
+    },
+    {
+      "id": "GM-15", "requirement": "Mission C real DesignChange, implementation, reindex, Expected-vs-Actual, LVS/alignment",
+      "existing_implementation": "DesignLifecycleService and Change Workspace expose command-driven plan/reindex/evaluate/verify; existing backend computes alignment and LVS.",
+      "location": ["src/rintel/design_lifecycle/service.py:162", "src/rintel/design_lifecycle/service.py:209", "src/rintel/design_lifecycle/projection.py:237", "src/rintel/server/api/design_lifecycle.py:238"],
+      "classification": "REUSE", "required_change": "Mission C orchestrator calls the existing service against tutorial repo only; do not add TutorialTruthService or TutorialAlignmentService.",
+      "owner": "backend", "truth_authority_risk": "A tutorial completion event cannot call canonical publication; only actual isolated reindex job may update isolated CURRENT.",
+      "test_requirement": "Real bounded change produces linked index job, fresh comparison and same DesignRevision binding; prod CURRENT unchanged."
+    },
+    {
+      "id": "GM-16", "requirement": "Mission C real Build, trusted Test and VERIFIED_REPAIR",
+      "existing_implementation": "Server-owned ExecutionAuthority issues BUILD/TEST receipts; BuildRecovery assess_repair returns VERIFIED_REPAIR only after matching source/test/revision and lifecycle verify.",
+      "location": ["src/rintel/server/api/execution_authority.py:42", "src/rintel/build_recovery.py:410", "historical:docs/acceptance/EXECUTION_AUTHORITY0_REPORT.md:9"],
+      "classification": "HOOK", "required_change": "Register server-owned bounded tutorial BUILD/TEST profiles for the isolated worktree and expose existing receipt chain; no browser-supplied shell command.",
+      "owner": "backend", "truth_authority_risk": "Build PASS alone and Agent claim are not verified repair; use actual trusted TestRunReceipt and Change VERIFIED state.",
+      "test_requirement": "BUILD fail→repair→BUILD pass→TEST fail/pass→reindex→verify; wrong source/revision/profile rejects."
+    },
+    {
+      "id": "GM-17", "requirement": "Mission C excludes production approval/publication; stop at isolated VERIFIED_REPAIR",
+      "existing_implementation": "Local owner and publication routes exist, but named authority line remains unclosed; isolated verified repair has a real historical witness.",
+      "location": ["src/rintel/server/api/local_owner.py:1", "src/rintel/server/api/design_lifecycle.py:203", "src/rintel/build_recovery.py:462", "historical:docs/acceptance/LOCAL_OWNER_AUTH0_REPORT.md:42"],
+      "classification": "OUT_OF_SCOPE", "required_change": "Do not include approve/close/merge-to-production as Mission C success predicate or tutorial action.",
+      "owner": "shared", "truth_authority_risk": "LOCAL_OWNER_AUTH0, APPROVAL-ISSUANCE-ANCHOR0 and COMMAND-GATE-CLOSURE0 are not claimed closed.",
+      "test_requirement": "Mission C API rejects production repo/approval/close and tutorial completion leaves production CURRENT untouched."
+    },
+    {
+      "id": "GM-18", "requirement": "Exact Evidence→SourceSpan→focused source, then surrounding/full source (TUX16)",
+      "existing_implementation": "Change Workspace has bound source resolver and Evidence Inspector; workbench has SourceViewer and source dock.",
+      "location": ["src/rintel/server/api/design_lifecycle.py:285", "web/src/api/design-lifecycle.ts:172", "web/src/components/SourceViewer.vue:1", "web/src/views/ChangeWorkspaceView.vue:553"],
+      "classification": "HOOK", "required_change": "Add mission inspection receipt only after successful server-bound evidence and SourceSpan read; preserve raw/full-source escape path.",
+      "owner": "shared", "truth_authority_risk": "A client-reported click is not an inspection receipt; fallback fuzzy source jump is forbidden for proof.",
+      "test_requirement": "Exact ref/revision/source-digest positives; forged/stale span negatives; full-source route remains available."
+    },
+    {
+      "id": "GM-19", "requirement": "Build diagnostics preserve Normalized, Source, Evidence and Raw drilldown",
+      "existing_implementation": "Change Workspace exposes build failure, bound diagnostic source and raw artifact APIs.",
+      "location": ["web/src/views/ChangeWorkspaceView.vue:429", "src/rintel/server/api/build_recovery.py:97", "src/rintel/server/api/build_recovery.py:128"],
+      "classification": "REUSE", "required_change": "Mission cue/proof deep-links to existing diagnostic views without omitting raw provenance.",
+      "owner": "frontend", "truth_authority_risk": "Normalized inference is not compiler observation.",
+      "test_requirement": "Browser drilldown preserves diagnostic identity and raw access."
+    },
+    {
+      "id": "GM-20", "requirement": "Real process stages for Index/Build/Test/Re-index/Verification; no spinner-only UI",
+      "existing_implementation": "IndexProgress and Change Workspace reindex/activity/execution receipts exist; no unified tutorial-stage display.",
+      "location": ["web/src/components/IndexProgress.vue:1", "web/src/views/ChangeWorkspaceView.vue:429", "src/rintel/design_lifecycle/projection.py:278"],
+      "classification": "HOOK", "required_change": "Project stage labels from actual job and receipt states; unavailable stage remains UNAVAILABLE, not green.",
+      "owner": "frontend", "truth_authority_risk": "Requested/running is not completed; do not infer success from elapsed time.",
+      "test_requirement": "Pending/failure/cancel/stale-completed stage and refresh tests."
+    },
+    {
+      "id": "GM-21", "requirement": "Independent transfer task before INDEPENDENT (TUX11)",
+      "existing_implementation": "W1/W2/W4 provide core cases, not an independent transfer case.",
+      "location": ["historical:analysis_tournament/runtime_alignment_evidence0/w1_observed.json", "historical:analysis_tournament/runtime_alignment_evidence0/w4_indirect_observed.json"],
+      "classification": "NEW", "required_change": "Add a distinct, real, bounded evidence case with exact backend predicate; no recycled W1/W2/W4 answer key.",
+      "owner": "shared", "truth_authority_risk": "Assistance tier cannot certify understanding without transfer evidence.",
+      "test_requirement": "Fresh-user transfer acceptance and wrong/guessed answer negatives."
+    },
+    {
+      "id": "GM-22", "requirement": "Keyboard-only completion and status not conveyed by color alone (TUX12/TUX13)",
+      "existing_implementation": "Current views use native buttons and some aria labels; Mission controls do not exist.",
+      "location": ["web/src/components/TopBar.vue:14", "web/src/views/ChangeWorkspaceView.vue:280"],
+      "classification": "SMALL_CHANGE", "required_change": "Mission strip/drawer/cue/proof must use semantic text, focus order, escape and screen-reader labels.",
+      "owner": "frontend", "truth_authority_risk": "Visual emphasis must not alter evidence state.",
+      "test_requirement": "Keyboard-only A/B/C and accessible-name/status assertions at all audited widths."
+    },
+    {
+      "id": "GM-23", "requirement": "Progressive disclosure keeps topology, raw evidence and full Inspector discoverable (TUX15/TUX16)",
+      "existing_implementation": "Topology route, Inspector, bound source and raw build artifacts are already reachable.",
+      "location": ["web/src/router.ts:17", "web/src/views/ChangeWorkspaceView.vue:553", "web/src/views/ChangeWorkspaceView.vue:429"],
+      "classification": "REUSE", "required_change": "Focus initial mission on Overview/Alignment/Evidence without locking advanced routes or hiding raw evidence.",
+      "owner": "frontend", "truth_authority_risk": "No redacted or filtered evidence presented as complete.",
+      "test_requirement": "Navigation and raw evidence remain reachable during active mission."
+    },
+    {
+      "id": "GM-24", "requirement": "Mission D advanced multi-Agent/Git is not first-run onboarding",
+      "existing_implementation": "GitWorkspaceManager and collaboration APIs exist with real worktree provenance.",
+      "location": ["src/rintel/git_workspace.py:141", "src/rintel/server/api/git_workspace.py:66"],
+      "classification": "OUT_OF_SCOPE", "required_change": "Do not implement Mission D in A/B/C release; retain Agent commit != accepted truth and merge != CURRENT in explanatory contract.",
+      "owner": "shared", "truth_authority_risk": "Git merge cannot be treated as canonical publication.",
+      "test_requirement": "No Mission D completion endpoint in first-run API; Git semantics regression."
+    },
+    {
+      "id": "GM-25", "requirement": "Real browser E2E and zero critical truth-boundary teaching errors (TUX17/TUX18)",
+      "existing_implementation": "Historical backend witness tests and web E2E suites exist only in unreleased source workspace; public source release tracks no tests.",
+      "location": ["historical:tests/test_runtime_alignment_evidence0.py:100", "historical:tests/test_execution_authority0.py:356", "historical:web/tests/e2e/source-span-ux0.spec.ts"],
+      "classification": "NEW", "required_change": "Bring focused test contracts into the public branch and add real installed-browser A/B/C journey plus fresh-user transfer; never use UI-only fixture as truth.",
+      "owner": "shared", "truth_authority_risk": "Test absence in v0.1.0 cannot be relabeled PASS; explicit semantic errors are release blockers.",
+      "test_requirement": "Backend predicate/isolation/authority tests, web unit/typecheck/build, 1280/1440/1800 browser journey and fresh-user zero-critical-error review."
+    }
+  ]
+}

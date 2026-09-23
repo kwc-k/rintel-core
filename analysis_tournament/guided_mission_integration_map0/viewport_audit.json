@@ -1,0 +1,24 @@
+{
+  "schema": "guided-mission-viewport-audit/1",
+  "product_code_base_sha": "4f27dc2e106ef8cfdeeb66c91333728e88dcc5c5",
+  "method": "Headless Google Chrome via installed @playwright/test, viewport height 900, real v0.1.0 server on loopback, isolated SQLite datastore and indexed real Git repository; DOM bounding boxes, elementFromPoint at Design Changes center, and screenshots inspected. No tutorial UI exists yet.",
+  "data_scope": "Temporary /tmp/rintel-map-xeijBg; repository index and DesignChange for layout only, never production data or W1/W2/W4 witness claims.",
+  "workbench": [
+    {"width": 1280, "explorer_px": 300, "center_px": 588, "inspector_px": 360, "dock_height_px": 300, "topbar_selected_repo": {"left_right_px": 808.56, "right_left_px": 820.56, "design_button_px": [837.14, 947.38], "language_px": [820.56, 976.42], "design_center_hit": "language toggle", "result": "FAIL_EXISTING_OVERLAP"}},
+    {"width": 1440, "explorer_px": 300, "center_px": 748, "inspector_px": 360, "dock_height_px": 300, "topbar_selected_repo": {"left_right_px": 911.02, "right_left_px": 923.02, "design_button_px": [837.14, 947.38], "language_px": [923.02, 1078.88], "design_center_hit": "Design Changes", "result": "PASS_CURRENT_CONTROLS_WITH_24PX_EDGE_OVERLAP"}},
+    {"width": 1800, "explorer_px": 300, "center_px": 1108, "inspector_px": 360, "dock_height_px": 300, "topbar_selected_repo": {"left_right_px": 1004.5, "right_left_px": 1230.5, "design_button_px": [894.27, 1004.5], "language_px": [1230.5, 1386.36], "design_center_hit": "Design Changes", "result": "PASS_CURRENT_CONTROLS"}}
+  ],
+  "change_workspace_with_real_inspector_selection": [
+    {"width": 1280, "left_nav_px": 220, "main_px": 730, "panel_px": 674, "inspector_px": 330, "horizontal_scroll": false, "risk": "A fourth permanent 300px drawer would reduce main to about 430px; forbidden."},
+    {"width": 1440, "left_nav_px": 220, "main_px": 890, "panel_px": 834, "inspector_px": 330, "horizontal_scroll": false, "risk": "A fourth permanent 300px drawer would reduce main to about 590px; avoid."},
+    {"width": 1800, "left_nav_px": 220, "main_px": 1250, "panel_px": 1000, "inspector_px": 330, "horizontal_scroll": false, "risk": "Room exists but use one responsive drawer behavior across widths."}
+  ],
+  "frozen_layout_decisions": [
+    "Do not add Mission Strip to the existing horizontal TopBar.",
+    "Resolve existing TopBar overflow at 1280 as a bounded frontend change before adding mission controls; preserve language and Design Changes access.",
+    "Mission Drawer is transient/overlay or a replaceable region, never a permanent fourth column.",
+    "Context Cue is at most one, dismissible, and must not obscure Inspector/SourceSpan controls.",
+    "Retest all three widths with repository selected, Inspector open, Mission Strip and Drawer states, plus keyboard/focus behavior."
+  ],
+  "limits": "The measurement audits existing v0.1.0 UI only. It is not a PASS claim for future Mission Strip/Drawer rendering."
+}
