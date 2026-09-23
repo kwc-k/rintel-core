@@ -107,6 +107,7 @@ def test_read_preset_and_real_published_drilldown(indexed_local):
         status = mcp.tool("repo_status")
         published = next(r for r in status["repos"] if r["repo_id"] == "witness")
         assert published["snapshot_id"] == sid
+        assert "evidence_revision" not in status  # mixed/multiple repos have per-row revisions
         for node in nodes.values():
             matches = mcp.tool("search_symbols", {"query": node["name"],
                                                    "repo_id": "witness"})["matches"]
@@ -117,6 +118,7 @@ def test_read_preset_and_real_published_drilldown(indexed_local):
             topology = mcp.tool("query_topology", {"repo_id": "witness",
                                                     "root": node["id"]})
             assert topology["snapshot_id"] == sid
+            assert topology["evidence_revision"] == sid
             assert any(e["kind"] == "CALLS" for e in topology["edges"])
             evidence = mcp.tool("explain_evidence", {"entity_id": node["id"],
                                                          "repo_id": "witness"})
@@ -143,9 +145,14 @@ def test_read_preset_and_real_published_drilldown(indexed_local):
 
 def test_empty_store_and_invalid_arguments_fail_closed(tmp_path: Path):
     data_home = tmp_path / "empty"
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("CANARY_OUTSIDE_REGISTERED_REPOSITORY")
     mcp = MCPProcess(data_home)
     try:
         assert mcp.tool("repo_status")["repos"] == []
+        missing_status = mcp.tool("repo_status", {"repo": "absent"})
+        assert missing_status["error"]["code"] == "REPO_NOT_FOUND"
+        assert "evidence_revision" not in missing_status
         missing = mcp.tool("search_symbols", {"query": "x", "repo_id": "absent"})
         assert missing["error"]["code"] == "REPO_NOT_FOUND"
         missing_evidence = mcp.tool("explain_evidence", {
@@ -153,8 +160,22 @@ def test_empty_store_and_invalid_arguments_fail_closed(tmp_path: Path):
         assert missing_evidence["error"]["code"] == "REPO_NOT_FOUND"
         bad = mcp.tool("get_symbol", {"canonical_id": 42})
         assert bad["error"]["code"] == "INVALID_ARGUMENT_TYPE"
+        malformed_args = mcp.call("tools/call", {"name": "get_symbol", "arguments": [1]})
+        assert "error" not in malformed_args
+        assert json.loads(malformed_args["result"]["content"][0]["text"])["error"]["code"] == "INVALID_ARGUMENT_TYPE"
         uri = mcp.tool("read_resource", {"uri": "rintel://unknown"})
         assert uri["error"]["code"] == "INVALID_URI"
+        for disguised in (f"x/rintel://file/{outside}",
+                          f"rintel://ignored/rintel://file/{outside}",
+                          f"\nrintel://file/{outside}",
+                          f"rintel://\nfile/{outside}", "rintel://["):
+            denied = mcp.tool("read_resource", {"uri": disguised})
+            assert denied["error"]["code"] == "INVALID_URI"
+            assert "CANARY_OUTSIDE_REGISTERED_REPOSITORY" not in json.dumps(denied)
+            resource_response = mcp.call("resources/read", {"uri": disguised})
+            resource_denied = json.loads(resource_response["result"]["contents"][0]["text"])
+            assert resource_denied["error"]["code"] == "INVALID_URI"
+            assert "CANARY_OUTSIDE_REGISTERED_REPOSITORY" not in json.dumps(resource_denied)
     finally:
         mcp.close()
 

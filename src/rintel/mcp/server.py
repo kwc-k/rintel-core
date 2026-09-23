@@ -20,6 +20,7 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .instructions import INSTRUCTIONS
 from . import published as published_store
@@ -1749,9 +1750,15 @@ def t_request_agent_execution(p: dict) -> dict:
 
 def t_read_resource(p: dict) -> dict:
     uri = str(p.get("uri", ""))
-    if not uri.strip():
-        return {"summary": "INVALID_URI: uri required",
-                "error": {"code": "INVALID_URI", "requested": "",
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        parts = None
+    if (parts is None or not uri.startswith("rintel://") or uri != parts.geturl()
+            or parts.scheme != "rintel" or not parts.netloc or parts.fragment
+            or (parts.query and parts.netloc != "published-source")):
+        return {"summary": "INVALID_URI: an absolute rintel:// resource URI is required",
+                "error": {"code": "INVALID_URI", "requested": uri,
                           "hint": "uri must be rintel://... — see resources/list for supported forms"}}
     published = published_store.read_resource(store(), uri)
     if published is not None:
@@ -1830,7 +1837,9 @@ def t_read_resource(p: dict) -> dict:
         except BuildRecoveryError as exc:
             return {"uri": uri, "error": {"code": "BUILD_ATTEMPT_UNAVAILABLE",
                                            "message": str(exc)}}
-    n = uri.split("rintel://")[-1].split("/")
+    # Parse exactly once. Splitting on an embedded rintel:// let malformed
+    # prefixes bypass the release-only repository boundary for file reads.
+    n = [parts.netloc, *parts.path.removeprefix("/").split("/")]
     if len(n) >= 3 and n[0] == "symbol" and n[2] == "source":
         name = n[1]
         node = None
@@ -2532,9 +2541,14 @@ def contract_fail(tool: str, issues: list[dict]) -> dict:
                               "error.did_you_mean / error.hint to fix the call")}
 
 
-def mcp_call(tool: str, args: dict | None) -> dict:
+def mcp_call(tool: str, args: object) -> dict:
     """boundary: validate against the schema, then dispatch (§16 single source)."""
     spec = TOOLS[tool][1]
+    if args is not None and not isinstance(args, dict):
+        return contract_fail(tool, [{"code": "INVALID_ARGUMENT_TYPE",
+                                     "message": "'arguments' expects an object",
+                                     "parameter": "arguments",
+                                     "received": type(args).__name__, "expected": "object"}])
     clean = {k: v for k, v in (args or {}).items() if v is not None}
     issues = contract_issues(tool, spec, clean)
     if issues:
@@ -2951,8 +2965,12 @@ def run() -> None:
                             "inputSchema": {"type": "object", "properties": schema_props}})
             _send({"jsonrpc": "2.0", "id": rid, "result": {"tools": out}})
         elif method == "tools/call":
-            name = (msg.get("params") or {}).get("name")
-            args = (msg.get("params") or {}).get("arguments") or {}
+            params = msg.get("params")
+            if not isinstance(params, dict):
+                _rpc_error(rid, -32602, "params must be an object")
+                continue
+            name = params.get("name")
+            args = params.get("arguments")
             fn = TOOLS.get(name, (None, None))[0]
             if fn is None:
                 _rpc_error(rid, -32601, f"unknown tool {name}")
@@ -2967,9 +2985,15 @@ def run() -> None:
                 result = mcp_call(name, args)
                 if isinstance(result, dict) and "error" in result and "summary" not in result:
                     raise ValueError(result["error"])
-                if isinstance(result, dict) and name in (
+                if isinstance(result, dict) and "error" not in result and name in (
                         "query_data_interface", "query_topology", "repo_status",
-                        "query_runtime"):
+                        "query_runtime") and not (
+                            name == "query_topology" and isinstance(args, dict)
+                            and args.get("repo_id")
+                        ) and not (
+                            name == "repo_status" and any(
+                                row.get("lane") == "published" for row in result.get("repos", []))
+                        ):
                     # XS9: high-level responses carry the published evidence
                     # revision (identical across projections — no mixed view)
                     result.setdefault("evidence_revision", _evidence_revision())

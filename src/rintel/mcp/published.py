@@ -164,7 +164,7 @@ def topology(store: Store, params: dict) -> dict:
         if len(edges) >= limit:
             break
     return {"summary": f"published snapshot {sid}: {len(nodes)} nodes, {len(edges)} edges",
-            "repo_id": repo_id, "snapshot_id": sid, "root": root,
+            "repo_id": repo_id, "snapshot_id": sid, "evidence_revision": sid, "root": root,
             "nodes": nodes, "edges": edges, "unknown_endpoints": 0,
             "capability": {"coverage": "UNKNOWN unless a scoped certificate is supplied"},
             "next": ["explain_evidence", "read_resource"]}
