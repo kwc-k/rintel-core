@@ -164,6 +164,10 @@ class PgJobsPersister:
             conn.close()
 
     def get(self, job_id: str) -> dict | None:
+        try:
+            uuid.UUID(job_id)
+        except (TypeError, ValueError, AttributeError):
+            return None
         conn = psycopg.connect(self._url, autocommit=True,
                                row_factory=dict_row)
         try:
@@ -224,26 +228,30 @@ class StoreJobsPersister:
 
     def __init__(self, store_factory):
         self.store_factory = store_factory
-        self._sqlite_adapter = None
+        self._adapter_instance = None
 
     def _adapter(self):
-        if self._sqlite_adapter is not None:
-            return self._sqlite_adapter
+        if self._adapter_instance is not None:
+            return self._adapter_instance
         store = self.store_factory()
-        if hasattr(store, "path"):
-            path = store.path
+        try:
+            if hasattr(store, "path"):
+                adapter = SqliteJobsPersister(store.path)
+            elif hasattr(store, "dsn"):
+                adapter = PgJobsPersister(store.dsn, store.schema)
+            else:
+                return None
+            self._adapter_instance = adapter
+            return adapter
+        finally:
             store.close()
-            self._sqlite_adapter = SqliteJobsPersister(path)
-            return self._sqlite_adapter
-        store.close()
-        return None
 
     def persist(self, job: dict) -> None:
         adapter = self._adapter()
         if adapter:
             adapter.persist(job)
         else:
-            raise RuntimeError("PostgreSQL jobs require PgJobsPersister")
+            raise RuntimeError("A durable jobs persister is required")
 
     def get(self, job_id: str) -> dict | None:
         adapter = self._adapter()
