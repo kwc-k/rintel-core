@@ -1055,6 +1055,13 @@ def _frontier_hits(adj: dict, src: str, tgt: str, max_hops: int) -> list[str]:
 
 
 def t_explain_evidence(p: dict) -> dict:
+    repo_id = p.get("repo_id")
+    if repo_id and not store().repo(repo_id):
+        return {"summary": f"REPO_NOT_FOUND: '{repo_id}' is not registered",
+                "error": {"code": "REPO_NOT_FOUND", "requested": repo_id}}
+    if repo_id and store().current_snapshot(repo_id) is None:
+        return {"summary": f"REPO_NOT_INDEXED: '{repo_id}' has no published snapshot",
+                "error": {"code": "REPO_NOT_INDEXED", "requested": repo_id}}
     fact_id = str(p.get("fact_id", ""))
     edge_id = str(p.get("edge_id", ""))
     entity_id = str(p.get("entity_id", ""))
@@ -1062,6 +1069,9 @@ def t_explain_evidence(p: dict) -> dict:
     binding_id = str(p.get("binding_id", ""))
     transfer_id = str(p.get("transfer_id", ""))
     semantic_stage_id = str(p.get("semantic_stage_id", ""))
+    if repo_id and not (entity_id or edge_id):
+        return {"summary": "UNSUPPORTED_SCOPE: this selector is not bound to the published repository",
+                "error": {"code": "UNSUPPORTED_SCOPE", "requested": repo_id}}
     if entity_id or edge_id:
         published = published_store.explain(store(), entity_id or edge_id, p.get("repo_id"))
         if published is not None:

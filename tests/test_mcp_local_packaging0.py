@@ -147,6 +147,9 @@ def test_empty_store_and_invalid_arguments_fail_closed(tmp_path: Path):
         assert mcp.tool("repo_status")["repos"] == []
         missing = mcp.tool("search_symbols", {"query": "x", "repo_id": "absent"})
         assert missing["error"]["code"] == "REPO_NOT_FOUND"
+        missing_evidence = mcp.tool("explain_evidence", {
+            "entity_id": "node:absent", "repo_id": "absent"})
+        assert missing_evidence["error"]["code"] == "REPO_NOT_FOUND"
         bad = mcp.tool("get_symbol", {"canonical_id": 42})
         assert bad["error"]["code"] == "INVALID_ARGUMENT_TYPE"
         uri = mcp.tool("read_resource", {"uri": "rintel://unknown"})
@@ -171,6 +174,9 @@ def test_unindexed_repo_stale_source_and_restart(indexed_local):
         absent_search = mcp.tool("search_symbols", {"repo_id": "not-indexed",
                                                      "query": "alpha"})
         assert absent_search["error"]["code"] == "REPO_NOT_INDEXED"
+        absent_evidence = mcp.tool("explain_evidence", {
+            "entity_id": nodes["alpha"]["id"], "repo_id": "not-indexed"})
+        assert absent_evidence["error"]["code"] == "REPO_NOT_INDEXED"
         symbol = mcp.tool("get_symbol", {"repo_id": "witness",
                                          "canonical_id": nodes["alpha"]["id"]})["hits"][0]
         (repo / "sample.py").write_text("def alpha():\n    return 999\n")
@@ -204,6 +210,21 @@ def test_doctor_reports_real_mcp_runtime(tmp_path: Path):
     assert report["mcp"]["datastore"] == str(tmp_path / "doctor-data" / "evidence.db")
     assert report["mcp"]["instructions"] == "loaded"
     assert "repo_status" in report["mcp"]["tool_surface"]
+
+
+def test_installed_cli_mcp_entrypoint(tmp_path: Path):
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("RINTEL_DATABASE_URL", None)
+    env.pop("RINTEL_SQLITE_PATH", None)
+    env["RINTEL_DATA_HOME"] = str(tmp_path / "installed-cli-data")
+    result = subprocess.run([str(ROOT / ".venv" / "bin" / "rintel"), "mcp"],
+                            cwd=ROOT, env=env,
+                            input=json.dumps({"jsonrpc": "2.0", "id": 1,
+                                              "method": "initialize"}) + "\n",
+                            capture_output=True, text=True, timeout=30, check=True)
+    assert json.loads(result.stdout)["result"]["instructions"]
+    assert (tmp_path / "installed-cli-data" / "evidence.db").is_file()
 
 
 def test_design_preset_only_explicitly_exposes_bounded_tools(tmp_path: Path):
@@ -312,7 +333,9 @@ def test_fresh_http_registration_and_index_are_immediately_visible_to_mcp(tmp_pa
                                "--port", str(port)], cwd=ROOT, env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                               text=True)
+    mcp = MCPProcess(data_home)
     try:
+        assert mcp.tool("repo_status")["repos"] == []
         url = f"http://127.0.0.1:{port}/api/v1"
         for _ in range(100):
             try:
@@ -340,23 +363,20 @@ def test_fresh_http_registration_and_index_are_immediately_visible_to_mcp(tmp_pa
                 break
             time.sleep(0.1)
         assert snapshot, f"index job {job_id} did not publish a snapshot"
-        mcp = MCPProcess(data_home)
-        try:
-            status = mcp.tool("repo_status")
-            published = next(r for r in status["repos"] if r["repo_id"] == "fresh")
-            assert published["snapshot_id"] == snapshot
-            for name in ("fresh_python", "fresh_c"):
-                match = next(r for r in mcp.tool("search_symbols", {
-                    "query": name, "repo_id": "fresh"})["matches"] if r["name"] == name)
-                symbol = mcp.tool("get_symbol", {"canonical_id": match["canonical_id"],
-                                                 "repo_id": "fresh"})["hits"][0]
-                evidence = mcp.tool("explain_evidence", {"entity_id": match["canonical_id"],
-                                                         "repo_id": "fresh"})
-                source = mcp.tool("read_resource", {"uri": symbol["source_uri"]})
-                assert evidence["direct_record_found"]
-                assert name in source["text"]
-        finally:
-            mcp.close()
+        status = mcp.tool("repo_status")
+        published = next(r for r in status["repos"] if r["repo_id"] == "fresh")
+        assert published["snapshot_id"] == snapshot
+        for name in ("fresh_python", "fresh_c"):
+            match = next(r for r in mcp.tool("search_symbols", {
+                "query": name, "repo_id": "fresh"})["matches"] if r["name"] == name)
+            symbol = mcp.tool("get_symbol", {"canonical_id": match["canonical_id"],
+                                             "repo_id": "fresh"})["hits"][0]
+            evidence = mcp.tool("explain_evidence", {"entity_id": match["canonical_id"],
+                                                     "repo_id": "fresh"})
+            source = mcp.tool("read_resource", {"uri": symbol["source_uri"]})
+            assert evidence["direct_record_found"]
+            assert name in source["text"]
     finally:
+        mcp.close()
         server.terminate()
         server.wait(timeout=20)
