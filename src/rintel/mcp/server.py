@@ -20,11 +20,12 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .instructions import INSTRUCTIONS
+from . import published as published_store
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO))
 
 LANES = ("fac_c", "jpl")
 LANE_LABEL = {
@@ -68,28 +69,12 @@ except Exception:  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
-# store (same pgserver instance as the :8000 backend)
+# store (the same product datastore resolution as the local UI)
 # ---------------------------------------------------------------------------
 
 def make_store():
-    if os.environ.get("RINTEL_E2E_PROFILE"):
-        from rintel.server.deps import build_store
-        return build_store()
-    import tempfile
-    import psycopg
-    from rintel.pg.pgschema import create_all
-
-    pgdata = os.path.join(tempfile.gettempdir(), "rintel-pgdata")
-    os.makedirs(pgdata, exist_ok=True)
-    import pgserver
-    server = pgserver.get_server(pgdata, cleanup_mode="delete")
-    server.ensure_pgdata_inited()
-    server.ensure_postgres_running()
-    uri = server.get_uri()
-    with psycopg.connect(uri, autocommit=True) as conn:
-        create_all(conn)
-    from rintel.pg.pgstore import PgStore
-    return PgStore(uri)
+    from rintel.server.deps import build_store
+    return build_store()
 
 
 _STORE = None
@@ -107,6 +92,10 @@ def store():
 # ---------------------------------------------------------------------------
 
 _bundle_cache: dict[str, dict] = {}
+
+
+def _available_lanes() -> tuple[str, ...]:
+    return tuple(row["lane"] for row in lane_list()) if lane_list else ()
 
 
 def bundle(lane: str) -> dict:
@@ -350,10 +339,12 @@ def _bindings_between(src_name: str, tgt_name: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def t_repo_status(p: dict) -> dict:
+    if p.get("repo") and not store().repo(p["repo"]):
+        return {"summary": f"REPO_NOT_FOUND: '{p['repo']}' is not registered",
+                "error": {"code": "REPO_NOT_FOUND", "requested": p["repo"]}}
     out = {"repos": []}
-    for lane in LANES:
-        if lane_list:
-            li = next((x for x in lane_list() if x["lane"] == lane), None)
+    for lane in (() if p.get("repo") else _available_lanes()):
+        li = next((x for x in lane_list() if x["lane"] == lane), None)
         if li is None:
             continue
         b = bundle(lane)
@@ -371,7 +362,8 @@ def t_repo_status(p: dict) -> dict:
             "known_limitations": meta.get("capability_notes") or [],
             "counts": {"symbols": len(_nodes(b)), "edges": len(_edges(b))},
         })
-    return {"summary": f"{len(out['repos'])} repos/lanes ready (FAC + JusticePlutus).",
+    out["repos"].extend(published_store.repo_status(store(), p.get("repo")))
+    return {"summary": f"{len(out['repos'])} published repositories/available lanes.",
             "repos": out["repos"], "next": ["search_symbols", "query_topology", "query_flow"]}
 
 
@@ -521,6 +513,12 @@ def _search_in_lane(lane: str, q: str, kind: str | None, file: str | None,
 
 
 def t_search_symbols(p: dict) -> dict:
+    if p.get("repo_id") and not store().repo(p["repo_id"]):
+        return {"summary": f"REPO_NOT_FOUND: '{p['repo_id']}' is not registered",
+                "error": {"code": "REPO_NOT_FOUND", "requested": p["repo_id"]}}
+    if p.get("repo_id") and store().current_snapshot(p["repo_id"]) is None:
+        return {"summary": f"REPO_NOT_INDEXED: '{p['repo_id']}' has no published snapshot",
+                "error": {"code": "REPO_NOT_INDEXED", "requested": p["repo_id"]}}
     q = str(p.get("query", ""))
     if not q and not p.get("file"):
         return {"summary": "MISSING_REQUIRED_ARGUMENT: one of query/file is required",
@@ -532,7 +530,7 @@ def t_search_symbols(p: dict) -> dict:
     if not q and p.get("file"):
         # file.list_symbols semantics: list symbols of one file (long-file scout)
         rows = []
-        for lane in LANES:
+        for lane in (() if p.get("repo_id") else _available_lanes()):
             for n in _nodes(bundle(lane)):
                 f = str(n.get("file") or "")
                 if f.endswith(str(p["file"])) or f == str(p["file"]):
@@ -541,6 +539,7 @@ def t_search_symbols(p: dict) -> dict:
                                  "kind": "function/subroutine/program",
                                  "file": f, "language": n.get("language"),
                                  "binding": n.get("binding_status")})
+        rows.extend(published_store.search_symbols(store(), p))
         rows = rows[: int(p.get("limit", 120))]
         return {"status": "ok", "count": len(rows),
                 "summary": f"{len(rows)} symbol(s) in {p['file']} (file→symbol index; no source body read)",
@@ -551,12 +550,15 @@ def t_search_symbols(p: dict) -> dict:
     language = p.get("language")
     ql = q.lower()
     rows: list[dict] = []
-    for lane in LANES:
+    for lane in (() if p.get("repo_id") else _available_lanes()):
         rows.extend(_search_in_lane(lane, q, kind, file, language, max(2, limit - len(rows))))
         if len(rows) >= limit:
             break
     src_counts = {"frozen_lane": len(rows)}
-    if len(rows) < limit:
+    published = published_store.search_symbols(store(), p)
+    rows.extend(published[:max(0, limit - len(rows))])
+    src_counts["published_datastore"] = len(published)
+    if len(rows) < limit and not p.get("repo_id"):
         # FAC-LIBRARY-COVERAGE0: frozen lanes cover only the command layer.
         # Also search the DATA-INTERFACE0 parse set and the kernel universe so
         # a 0-match result never implies "symbol does not exist" (§21/§22).
@@ -638,11 +640,24 @@ def t_get_symbol(p: dict) -> dict:
                 "error": {"code": "MISSING_REQUIRED_ARGUMENT",
                           "message": "parameter 'canonical_id' is required",
                           "parameter": "canonical_id", "required": ["canonical_id"],
-                          "hint": "discover the symbol first via search_symbols(query=...)"}}
+                           "hint": "discover the symbol first via search_symbols(query=...)"}}
+    if p.get("repo_id") and not store().repo(p["repo_id"]):
+        return {"summary": f"REPO_NOT_FOUND: '{p['repo_id']}' is not registered",
+                "error": {"code": "REPO_NOT_FOUND", "requested": p["repo_id"]}}
+    if p.get("repo_id") and store().current_snapshot(p["repo_id"]) is None:
+        return {"summary": f"REPO_NOT_INDEXED: '{p['repo_id']}' has no published snapshot",
+                "error": {"code": "REPO_NOT_INDEXED", "requested": p["repo_id"]}}
+    published = published_store.get_symbol(store(), cid, p.get("repo_id"))
+    if published is not None:
+        return published
+    if p.get("repo_id"):
+        return {"summary": f"SYMBOL_NOT_FOUND: '{cid}' not in repository {p['repo_id']}",
+                "error": {"code": "SYMBOL_NOT_FOUND", "requested": cid,
+                          "hint": "use search_symbols(query=..., repo_id=...)"}}
     name = cid.split(":")[-1]
     with_ports = bool(p.get("include_ports"))
     hits = []
-    for lane in LANES:
+    for lane in _available_lanes():
         b = bundle(lane)
         n = _byname(b).get(name)
         if not n:
@@ -778,7 +793,16 @@ def _flow_members_of(name: str) -> list[dict]:
 
 
 def t_query_topology(p: dict) -> dict:
+    if p.get("repo_id"):
+        if p.get("lane"):
+            return {"summary": "AMBIGUOUS_ARGUMENTS: choose repo_id or lane",
+                    "error": {"code": "AMBIGUOUS_ARGUMENTS", "required": ["repo_id", "lane"]}}
+        return published_store.topology(store(), p)
     lane = str(p.get("lane", "fac_c"))
+    if lane not in _available_lanes():
+        return {"summary": f"lane {lane} has no published topology artifact",
+                "error": {"code": "LANE_UNAVAILABLE", "requested": lane,
+                          "hint": "use repo_status to discover published repositories, then pass repo_id"}}
     root = str(p.get("root", ""))
     relations = p.get("relations") or ["CALL"]
     direction = str(p.get("direction", "both"))
@@ -929,7 +953,16 @@ def t_query_topology(p: dict) -> dict:
 
 
 def t_find_path(p: dict) -> dict:
+    if p.get("repo_id"):
+        if p.get("lane"):
+            return {"summary": "AMBIGUOUS_ARGUMENTS: choose repo_id or lane",
+                    "error": {"code": "AMBIGUOUS_ARGUMENTS", "required": ["repo_id", "lane"]}}
+        return published_store.find_path(store(), p)
     lane = str(p.get("lane", "fac_c"))
+    if lane not in _available_lanes():
+        return {"summary": f"lane {lane} has no published topology artifact",
+                "error": {"code": "LANE_UNAVAILABLE", "requested": lane,
+                          "hint": "use repo_status to discover available lanes"}}
     src = str(p.get("source", "")).split(":")[-1]
     tgt = str(p.get("target", "")).split(":")[-1]
     relations = p.get("relations") or ["CALL"]
@@ -1023,6 +1056,13 @@ def _frontier_hits(adj: dict, src: str, tgt: str, max_hops: int) -> list[str]:
 
 
 def t_explain_evidence(p: dict) -> dict:
+    repo_id = p.get("repo_id")
+    if repo_id and not store().repo(repo_id):
+        return {"summary": f"REPO_NOT_FOUND: '{repo_id}' is not registered",
+                "error": {"code": "REPO_NOT_FOUND", "requested": repo_id}}
+    if repo_id and store().current_snapshot(repo_id) is None:
+        return {"summary": f"REPO_NOT_INDEXED: '{repo_id}' has no published snapshot",
+                "error": {"code": "REPO_NOT_INDEXED", "requested": repo_id}}
     fact_id = str(p.get("fact_id", ""))
     edge_id = str(p.get("edge_id", ""))
     entity_id = str(p.get("entity_id", ""))
@@ -1030,6 +1070,16 @@ def t_explain_evidence(p: dict) -> dict:
     binding_id = str(p.get("binding_id", ""))
     transfer_id = str(p.get("transfer_id", ""))
     semantic_stage_id = str(p.get("semantic_stage_id", ""))
+    if repo_id and not (entity_id or edge_id):
+        return {"summary": "UNSUPPORTED_SCOPE: this selector is not bound to the published repository",
+                "error": {"code": "UNSUPPORTED_SCOPE", "requested": repo_id}}
+    if entity_id or edge_id:
+        published = published_store.explain(store(), entity_id or edge_id, p.get("repo_id"))
+        if published is not None:
+            return published
+        if p.get("repo_id"):
+            return {"summary": "ENTITY_NOT_FOUND: no published fact at this repository",
+                    "error": {"code": "ENTITY_NOT_FOUND", "requested": entity_id or edge_id}}
     # §7: Port → formal declaration → callsite actual → source
     if port_id:
         for port in _di_ports():
@@ -1131,7 +1181,7 @@ def t_explain_evidence(p: dict) -> dict:
                 "note": "PASS_BY_REFERENCE is an interface property, NOT evidence of a memory copy"}
     out = []
     direct_edge = None
-    for lane in LANES:
+    for lane in _available_lanes():
         b = bundle(lane)
         for e in _edges(b):
             for w in (e.get("representative_witnesses") or []):
@@ -1700,10 +1750,33 @@ def t_request_agent_execution(p: dict) -> dict:
 
 def t_read_resource(p: dict) -> dict:
     uri = str(p.get("uri", ""))
-    if not uri.strip():
-        return {"summary": "INVALID_URI: uri required",
-                "error": {"code": "INVALID_URI", "requested": "",
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        parts = None
+    if (parts is None or not uri.startswith("rintel://") or uri != parts.geturl()
+            or parts.scheme != "rintel" or not parts.netloc or parts.fragment
+            or (parts.query and parts.netloc != "published-source")):
+        return {"summary": "INVALID_URI: an absolute rintel:// resource URI is required",
+                "error": {"code": "INVALID_URI", "requested": uri,
                           "hint": "uri must be rintel://... — see resources/list for supported forms"}}
+    published = published_store.read_resource(store(), uri)
+    if published is not None:
+        return published
+    if os.environ.get("RINTEL_MCP_LOCAL_RELEASE") == "1" and uri.startswith("rintel://file/"):
+        candidate = Path(uri.removeprefix("rintel://file/"))
+        if candidate.is_absolute():
+            resolved = candidate.resolve()
+            for repo in store().repos():
+                root = Path(repo["root_path"]).resolve()
+                if resolved.is_relative_to(root):
+                    sid = store().current_snapshot(repo["id"])
+                    if sid:
+                        safe_uri = published_store.source_uri(
+                            repo["id"], sid, resolved.relative_to(root).as_posix(), 1, 200)
+                        return published_store.read_resource(store(), safe_uri)
+        return {"uri": uri, "summary": "INVALID_URI: file is outside indexed repositories",
+                "error": {"code": "INVALID_URI", "requested": uri}}
     if uri.startswith("rintel://execution/") or uri.startswith("rintel://test-run/"):
         from rintel.execution_authority import ExecutionError
         from rintel.server.execution_config import load_execution_registry
@@ -1764,12 +1837,14 @@ def t_read_resource(p: dict) -> dict:
         except BuildRecoveryError as exc:
             return {"uri": uri, "error": {"code": "BUILD_ATTEMPT_UNAVAILABLE",
                                            "message": str(exc)}}
-    n = uri.split("rintel://")[-1].split("/")
+    # Parse exactly once. Splitting on an embedded rintel:// let malformed
+    # prefixes bypass the release-only repository boundary for file reads.
+    n = [parts.netloc, *parts.path.removeprefix("/").split("/")]
     if len(n) >= 3 and n[0] == "symbol" and n[2] == "source":
         name = n[1]
         node = None
         lane = LANES[0]
-        for lane in LANES:
+        for lane in _available_lanes():
             b = bundle(lane)
             node = _byname(b).get(name)
             if node and node.get("source_range"):
@@ -2414,7 +2489,11 @@ def contract_issues(tool: str, spec: dict, args: dict) -> list[dict]:
         if k not in present:
             continue
         v = args[k]
-        if base == "int" and not (isinstance(v, int) and not isinstance(v, bool)):
+        if base == "str" and not isinstance(v, str):
+            issues.append({"code": "INVALID_ARGUMENT_TYPE", "parameter": k,
+                           "received": type(v).__name__, "expected": "str",
+                           "message": f"'{k}' expects str, got {type(v).__name__}"})
+        elif base == "int" and not (isinstance(v, int) and not isinstance(v, bool)):
             if not (isinstance(v, str) and v.strip().isdigit()):
                 issues.append({"code": "INVALID_ARGUMENT_TYPE", "parameter": k,
                                "received": type(v).__name__, "expected": "int",
@@ -2462,9 +2541,14 @@ def contract_fail(tool: str, issues: list[dict]) -> dict:
                               "error.did_you_mean / error.hint to fix the call")}
 
 
-def mcp_call(tool: str, args: dict | None) -> dict:
+def mcp_call(tool: str, args: object) -> dict:
     """boundary: validate against the schema, then dispatch (§16 single source)."""
     spec = TOOLS[tool][1]
+    if args is not None and not isinstance(args, dict):
+        return contract_fail(tool, [{"code": "INVALID_ARGUMENT_TYPE",
+                                     "message": "'arguments' expects an object",
+                                     "parameter": "arguments",
+                                     "received": type(args).__name__, "expected": "object"}])
     clean = {k: v for k, v in (args or {}).items() if v is not None}
     issues = contract_issues(tool, spec, clean)
     if issues:
@@ -2527,7 +2611,7 @@ def t_classify_evidence_authority(p: dict) -> dict:
 def _name_candidates(name: str, limit: int = 8) -> list[str]:
     """fuzzy suggestions across frozen lanes + DATA-INTERFACE0 + kernel universe."""
     names: set[str] = set()
-    for lane in LANES:
+    for lane in _available_lanes():
         names.update(_byname(bundle(lane)).keys())
     names.update(_di_by_fn().keys())
     try:
@@ -2570,7 +2654,7 @@ def _edge_recovery(edge_id: str) -> dict:
     never swallowed into '0 evidence record(s)'."""
     src, tgt = _split_edge_id(edge_id)
     cand: list[tuple[str, dict]] = []
-    for lane in LANES:
+    for lane in _available_lanes():
         b = bundle(lane)
         for e in _edges(b):
             if not e.get("kind"):
@@ -2624,18 +2708,18 @@ def _edge_recovery(edge_id: str) -> dict:
 
 TOOLS: dict[str, tuple[Callable, dict]] = {
     "repo_status": (t_repo_status, {
-        "name": "repo_status", "description": "What Rintel knows: repos/lanes, snapshot, languages, "
+        "name": "repo_status", "description": "What Rintel knows: published repositories and available lanes, snapshot, languages, "
                                               "per-relation capabilities, flow coverage, known limitations. "
                                               "Start here.", "params": {"repo": "str?"}}),
     "search_symbols": (t_search_symbols, {
         "name": "search_symbols", "description": "Search files/modules/functions/subroutines by name "
-                                                 "across the frozen lanes (FAC + JusticePlutus) — "
+                                                 "across registered published repositories and available frozen lanes — "
                                                  "0 matches never means the symbol does not exist "
                                                  "(DATA-INTERFACE0 + kernel universes are also searched). "
                                                  "Param contract: query (substring) OR file (list one "
                                                  "file's symbols) — at least one required. "
                                                  "Params: query(str?), kind?, language?, file?, limit(int=12).",
-        "params": {"query": "str?", "kind": "str?", "language": "str?", "file": "str?",
+        "params": {"query": "str?", "kind": "str?", "language": "str?", "file": "str?", "repo_id": "str?",
                    "limit": "int?"},
         "rules": {"one_of": [["query", "file"]]}}),
     "get_symbol": (t_get_symbol, {
@@ -2648,9 +2732,9 @@ TOOLS: dict[str, tuple[Callable, dict]] = {
                                               "DATA-INTERFACE0 parse set (DSBEV/DGER/… are real FAC "
                                               "subroutines outside the frozen fac_c lane). "
                                               "Params: canonical_id(str), include_ports(bool?=false).",
-        "params": {"canonical_id": "str", "include_ports": "bool?"}}),
+        "params": {"canonical_id": "str", "include_ports": "bool?", "repo_id": "str?"}}),
     "query_topology": (t_query_topology, {
-        "name": "query_topology", "description": "Neighborhood topology: relations (CALL/DATA/…), direction "
+        "name": "query_topology", "description": "Neighborhood topology for an exact published repo_id or available frozen lane: relations (CALL/DATA/…), direction "
                                                  "in/out/both, depth 1-2, returns nodes+edges with truth, "
                                                  "coverage, unknown endpoints, witness fact ids, capability "
                                                  "(never upgrades PARTIAL). DATA edges (or "
@@ -2661,7 +2745,7 @@ TOOLS: dict[str, tuple[Callable, dict]] = {
                                                  "queries also get boundary_interfaces. Params: lane "
                                                  "(enum fac_c|jpl), root, relations, direction, depth, "
                                                  "limit, include_data_interfaces(bool?).",
-        "params": {"lane": "str", "root": "str", "relations": "list?", "direction": "str?",
+        "params": {"lane": "str?", "repo_id": "str?", "root": "str", "relations": "list?", "direction": "str?",
                    "depth": "int?", "limit": "int?", "include_data_interfaces": "bool?"},
         "rules": {"enums": {"lane": LANES}}}),
     "query_runtime": (t_query_runtime, {
@@ -2708,9 +2792,9 @@ TOOLS: dict[str, tuple[Callable, dict]] = {
                    "region_id": "str?", "limit": "int?"},
         "rules": {"enums": {"action": DI_ACTIONS}}}),
     "find_path": (t_find_path, {
-        "name": "find_path", "description": "Candidate CALL path A→B with verdict FOUND / PARTIAL / UNKNOWN; "
+        "name": "find_path", "description": "Candidate CALL path A→B in a published repo_id or frozen lane with verdict FOUND / PARTIAL / UNKNOWN; "
                                             "unresolved targets are gaps, never proof of absence.",
-        "params": {"lane": "str", "source": "str", "target": "str", "relations": "list?", "max_hops": "int?"},
+        "params": {"lane": "str?", "repo_id": "str?", "source": "str", "target": "str", "relations": "list?", "max_hops": "int?"},
         "rules": {"enums": {"lane": LANES}}}),
     "explain_evidence": (t_explain_evidence, {
         "name": "explain_evidence", "description": "Why does Rintel believe X. Supported single-id "
@@ -2721,7 +2805,7 @@ TOOLS: dict[str, tuple[Callable, dict]] = {
                                                     "(transfer_kind; pass-by-reference is NOT a memory "
                                                     "copy), semantic_stage_id (annotation plane: "
                                                     "memberships + evidence_refs; NOT evidence).",
-        "params": {"fact_id": "str?", "edge_id": "str?", "entity_id": "str?",
+        "params": {"fact_id": "str?", "edge_id": "str?", "entity_id": "str?", "repo_id": "str?",
                    "port_id": "str?", "binding_id": "str?", "transfer_id": "str?",
                    "semantic_stage_id": "str?"},
         "rules": {"one_of": [SELECTOR_IDS], "mutex": [SELECTOR_IDS]}}),
@@ -2881,8 +2965,12 @@ def run() -> None:
                             "inputSchema": {"type": "object", "properties": schema_props}})
             _send({"jsonrpc": "2.0", "id": rid, "result": {"tools": out}})
         elif method == "tools/call":
-            name = (msg.get("params") or {}).get("name")
-            args = (msg.get("params") or {}).get("arguments") or {}
+            params = msg.get("params")
+            if not isinstance(params, dict):
+                _rpc_error(rid, -32602, "params must be an object")
+                continue
+            name = params.get("name")
+            args = params.get("arguments")
             fn = TOOLS.get(name, (None, None))[0]
             if fn is None:
                 _rpc_error(rid, -32601, f"unknown tool {name}")
@@ -2897,9 +2985,15 @@ def run() -> None:
                 result = mcp_call(name, args)
                 if isinstance(result, dict) and "error" in result and "summary" not in result:
                     raise ValueError(result["error"])
-                if isinstance(result, dict) and name in (
+                if isinstance(result, dict) and "error" not in result and name in (
                         "query_data_interface", "query_topology", "repo_status",
-                        "query_runtime"):
+                        "query_runtime") and not (
+                            name == "query_topology" and isinstance(args, dict)
+                            and args.get("repo_id")
+                        ) and not (
+                            name == "repo_status" and any(
+                                row.get("lane") == "published" for row in result.get("repos", []))
+                        ):
                     # XS9: high-level responses carry the published evidence
                     # revision (identical across projections — no mixed view)
                     result.setdefault("evidence_revision", _evidence_revision())
@@ -2908,12 +3002,17 @@ def run() -> None:
             except Exception as exc:
                 _rpc_error(rid, -32603, f"{type(exc).__name__}: {exc}")
         elif method == "resources/list":
+            if exposed_tools() is not None and "read_resource" not in exposed_tools():
+                _send({"jsonrpc": "2.0", "id": rid, "result": {"resources": []}})
+                continue
             _send({"jsonrpc": "2.0", "id": rid,
                    "result": {"resources": [
                        {"uri": "rintel://symbol/{name}/source",
                         "name": "symbol source snippet", "mimeType": "text/plain"},
-                       {"uri": "rintel://file/{path}",
-                        "name": "file excerpt", "mimeType": "text/plain"},
+                        {"uri": "rintel://file/{path}",
+                         "name": "file excerpt", "mimeType": "text/plain"},
+                        {"uri": "rintel://published-source/{repo}/{snapshot}/{path}?start=1&end=80",
+                         "name": "published repository source", "mimeType": "text/plain"},
                        {"uri": "rintel://port/{port_id}",
                         "name": "DataPort record + evidence", "mimeType": "application/json"},
                        {"uri": "rintel://binding/{binding_id}",
@@ -2929,6 +3028,10 @@ def run() -> None:
                        {"uri": "rintel://semantic-stage/{stage_id}",
                         "name": "semantic stage + memberships + edges", "mimeType": "application/json"}]}})
         elif method == "resources/read":
+            if exposed_tools() is not None and "read_resource" not in exposed_tools():
+                _send({"jsonrpc": "2.0", "id": rid, "result": {"contents": [
+                    {"type": "text", "text": json.dumps(_tool_not_exposed("read_resource"))}]}})
+                continue
             uri = (msg.get("params") or {}).get("uri", "")
             _send({"jsonrpc": "2.0", "id": rid,
                    "result": {"contents": [{"uri": uri, "text": json.dumps(

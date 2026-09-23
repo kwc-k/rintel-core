@@ -9,7 +9,7 @@ from . import __release_tag__, __version__
 from .db import SCHEMA_VERSION, Database
 from .harness import append_jsonl, print_table, verify_fixture
 from .indexer import Indexer
-from .release import doctor, serve
+from .release import doctor, serve, serve_mcp
 
 
 def cmd_index(args):
@@ -125,6 +125,14 @@ def cmd_serve(args):
         raise SystemExit(1) from None
 
 
+def cmd_mcp(args):
+    try:
+        serve_mcp(preset=args.preset)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"Rintel MCP could not start: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="ri",
                                  description="rintel — repository intelligence "
@@ -141,6 +149,11 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--no-browser", action="store_true")
     p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser("mcp", help="start the local MCP server over stdio")
+    p.add_argument("--preset", choices=("read", "design-execute"), default=None,
+                   help="tool exposure; defaults to read unless RINTEL_MCP_TOOLS is set")
+    p.set_defaults(fn=cmd_mcp)
 
     p = sub.add_parser("index", help="repository -> evidence.db")
     p.add_argument("path")

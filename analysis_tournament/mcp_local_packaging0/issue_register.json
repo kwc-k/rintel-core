@@ -1,0 +1,30 @@
+{
+  "node": "MCP-LOCAL-PACKAGING0",
+  "blocking_issues": [],
+  "nonblocking_issues": [
+    {
+      "id": "MCP-LP-001",
+      "status": "DOCUMENTED_LIMITATION",
+      "description": "A historical source-workspace MCP topology test expects the fac_c frozen artifact, which is not part of the v0.1.0 public source archive. In the earlier targeted historical run, 10 of 11 selected error-contract tests passed and this artifact-specific assertion failed. The release-published Store path has separate real Python/C tests on both platforms.",
+      "scope_decision": "Do not add FAC artifacts or rewrite historical semantics in a local packaging node."
+    },
+    {
+      "id": "MCP-LP-002",
+      "status": "UNCONFIRMED_OBSERVATION",
+      "description": "One earlier HTTP registration smoke saw a transient 404 when polling a job receipt. Polling the repository's published latest_snapshot succeeded, and the fresh registration/index/MCP witness passed on both platforms.",
+      "scope_decision": "Not attributed to MCP; no job subsystem change without a reproducer."
+    },
+    {
+      "id": "MCP-LP-003",
+      "status": "DOCUMENTED_TEST_INPUT_LIMITATION",
+      "description": "The public source branch omits scripts/rpp_clang_provider.py, so 17 historical coverage/runtime tests that launch it fail when run against this exact branch source. The other six selected authority/support/alignment/execution suites passed 62 and skipped 2; the MCP contract suite passed 11.",
+      "scope_decision": "Do not add Clang provider sources or claim full-suite PASS in this MCP packaging node. Retain the raw failure count for the packaging/test-input owner."
+    },
+    {
+      "id": "MCP-LP-004",
+      "status": "DOCUMENTED_LEGACY_CLI_DIFFERENCE",
+      "description": "The legacy `./rintel index` command defaults to a working-directory evidence.db; `./rintel serve` and `./rintel mcp` share the platform product datastore. An isolated archive smoke indexed a two-file Git repository with the legacy CLI and correctly found that MCP did not see it until product-Store registration. The fresh REST registration/index/MCP witness passed.",
+      "scope_decision": "The frozen MCP3 gate concerns serve ↔ MCP identity, not redesigning the legacy index CLI. Do not silently change its datastore semantics here; document the distinction in DOCS-OSS0."
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "node": "MCP-LOCAL-PACKAGING0",
+  "verdict": "PASS / FROZEN",
+  "release_baseline": "4f27dc2e106ef8cfdeeb66c91333728e88dcc5c5",
+  "implementation_commit": "ca01be4c0fde7e2a6afe100bec88a65fa24e79ea",
+  "independently_audited_parent_commit": "629a1c52fee9423d2b4ac263ac96e8a91af4e482",
+  "exact_source_archive_sha256": "419066f9ab345caf7b0cdc63108213fbf3dff1b07b50e995e5c5a6b3ab1d302e",
+  "archive_command": "git archive --format=tar.gz --prefix=rintel/ --output=<archive> ca01be4c0fde7e2a6afe100bec88a65fa24e79ea",
+  "platforms": {
+    "macos_arm64": {
+      "source_archive_sha256_verified": true,
+      "clean_install": "PASS",
+      "doctor_mcp": "READY",
+      "fresh_python_c_repository_tests": "10 passed",
+      "python": "3.12.13",
+      "datastore": "SQLite"
+    },
+    "linux_x86_64": {
+      "source_archive_sha256_verified": true,
+      "clean_install": "PASS",
+      "doctor_mcp": "READY",
+      "fresh_python_c_repository_tests": "10 passed",
+      "python": "3.12.14",
+      "datastore": "SQLite",
+      "optional_clang": "UNAVAILABLE; did not block MCP or the C tree-sitter witness"
+    }
+  },
+  "gates": {
+    "MCP1": "PASS: ./rintel mcp and installed .venv/bin/rintel mcp initialize from clean install",
+    "MCP2": "PASS: no pgserver import or undeclared runtime dependency in MCP startup",
+    "MCP3": "PASS: serve and MCP use configure_local_paths plus server.deps.build_store; default paths and RINTEL_DATA_HOME tested",
+    "MCP4": "PASS: initialize returns src/rintel/mcp/instructions.py verbatim",
+    "MCP5": "PASS: tools/list matches actual exposure; resources/list and resources/read obey read_resource exposure",
+    "MCP6": "PASS: default read preset exposes the 11 required read/analyze tools",
+    "MCP7": "PASS: design-execute explicitly adds only seven existing bounded tools; no shell, publication or approval tool",
+    "MCP8": "PASS: published and unindexed repository status read from real product Store",
+    "MCP9": "PASS: Python and C indexed symbols discoverable by search_symbols/get_symbol",
+    "MCP10": "PASS: published CALL topology, exact evidence and snapshot-bound source drilldown",
+    "MCP11": "PASS: simultaneous REST and MCP agree on repo id, snapshot, selected fact, SourceSpan and evidence; running MCP observes later HTTP registration/index",
+    "MCP12": "PASS (scoped): no canonical/coverage/authority engine changed; instructions and conservative published projection preserve UNKNOWN/PARTIAL and runtime-static boundaries; six historical suites 62 passed/2 skipped and MCP contract 11 passed on accepted source",
+    "MCP13": "PASS: unexposed tool and resource calls fail closed",
+    "MCP14": "PASS: invalid type/URI, unknown/unindexed repo and stale/missing source return structured errors",
+    "MCP15": "PASS: doctor opens actual Store and reports protocol, datastore identity/kind, surface and instruction load",
+    "MCP16": "PASS: exact archive macOS arm64 clean install and 10 focused tests",
+    "MCP17": "PASS: same archive Linux x86_64 clean install and 10 focused tests",
+    "MCP18": "PASS: no new approval, publication or arbitrary command tool; published adapter is read-only"
+  },
+  "test_file": "tests/test_mcp_local_packaging0.py",
+  "independent_acceptance": {
+    "review_result": "PASS / FROZEN on MCP1–MCP18 for accepted code commit",
+    "macos_arm64_focused": "10 passed in 25.71s on the exact same 419066f9... archive bytes used on Linux",
+    "linux_x86_64_focused": "10 passed in 11.01s on exact-byte archive",
+    "historical_truth_subset": "62 passed, 2 skipped",
+    "historical_mcp_contract": "11 passed",
+    "broader_historical_attempt": "64 passed, 4 skipped, 17 failed: public source branch lacks scripts/rpp_clang_provider.py; NOT full-suite PASS"
+  },
+  "limitations": [
+    "The full historical backend suite was not claimed as passing by this focused packaging node; a broader attempt had 17 external-provider-script failures.",
+    "A source-workspace historical fac_c topology test requires a frozen lane artifact omitted from the public release archive; the published repository path is tested independently.",
+    "The branch is not merged into main or published as a GitHub release."
+  ]
+}

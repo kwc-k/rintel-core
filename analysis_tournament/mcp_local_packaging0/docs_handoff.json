@@ -1,0 +1,22 @@
+{
+  "node": "MCP-LOCAL-PACKAGING0",
+  "consumer": "DOCS-OSS0",
+  "startup": ["./rintel mcp", "rintel mcp"],
+  "transport": "local stdio",
+  "protocol": "2024-11-05",
+  "default_preset": "read",
+  "presets": {
+    "read": "./rintel mcp --preset read",
+    "design-execute": "./rintel mcp --preset design-execute"
+  },
+  "explicit_exposure": "RINTEL_MCP_TOOLS=<comma-separated existing tool names>; do not combine with --preset",
+  "datastore": "Same server.settings/server.deps.build_store resolution as ./rintel serve: default platform SQLite path, RINTEL_DATA_HOME override, or configured RINTEL_DATABASE_URL.",
+  "minimal_client_process": {
+    "command": "/absolute/path/to/rintel",
+    "args": ["mcp"],
+    "environment": "Optional RINTEL_DATA_HOME matching the UI; no PYTHONPATH or activated venv required after ./install.sh."
+  },
+  "first_query": ["initialize", "tools/list", "repo_status", "search_symbols(query=..., repo_id=...)", "get_symbol(canonical_id=..., repo_id=...)", "query_topology(repo_id=..., root=...)", "explain_evidence(entity_id=..., repo_id=...)", "read_resource(uri=<returned source_uri>)"],
+  "truth_contract": "The single canonical text is src/rintel/mcp/instructions.py, returned by initialize; tools/list is the exposure authority.",
+  "documentation_owned_elsewhere": ["README Agent section", "docs/MCP.md", "client-specific configuration examples"]
+}
