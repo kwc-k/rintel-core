@@ -4,20 +4,33 @@
 
 [English](README.md)
 
-> **积极开发中。** 本地 CLI、API 和 MCP 接口现在可以使用；图形化 Workbench 仍是 **Experimental / 测试中**。Compiler、link、runtime、data 和 performance 等高级证据，取决于具体仓库实际采集到了什么。
+> **积极开发中。** 本地 MCP、CLI 和 API 接口现在可以使用；我们推荐先从 MCP 入手。图形化 Workbench 仍在开发中，欢迎大家试用并反馈。Compiler、link、runtime、data 和 performance 等高级证据，取决于具体仓库实际采集到了什么。
 
 ## 快速开始
 
-全新本地安装只推荐这一条路径：
+先在本机安装 Rintel：
 
 ```bash
 git clone https://github.com/kwc-k/rintel-core.git
 cd rintel-core
 ./install.sh
+```
+
+先通过 Workbench 注册并索引一次本机仓库：
+
+```bash
 ./rintel serve
 ```
 
-打开 <http://127.0.0.1:8000>，添加本机仓库即可注册并索引。克隆需要 Git；安装需要 `uv`、Node.js 20+，以及 `npx` 或 pnpm 11.22.0。安装器会通过 `uv` 在项目环境中获取 Python 3.12，并按锁文件构建本地 UI。正常安装不需要 PostgreSQL，默认使用 SQLite。用 `./rintel doctor` 或 `./rintel doctor --json` 查看必需与可选能力。
+打开 <http://127.0.0.1:8000>，添加要分析的仓库。然后在 Rintel clone 的目录中，将本地 stdio MCP server 注册到 Codex：
+
+```bash
+./rintel doctor
+codex mcp add rintel -- "$PWD/rintel" mcp
+codex mcp list
+```
+
+通过 AI Agent 探索已索引仓库时，推荐先用 MCP。这会在本机启动进程并连接同一个产品 datastore，并非托管的在线 MCP 服务。Workbench 仍可用于初始设置与可视化探索。克隆需要 Git；安装需要 `uv`、Node.js 20+，以及 `npx` 或 pnpm 11.22.0。安装器会通过 `uv` 在项目环境中获取 Python 3.12，并按锁文件构建本地 UI。正常安装不需要 PostgreSQL，默认使用 SQLite。`./rintel doctor --json` 还会报告 MCP 就绪状态、datastore 身份和实际暴露的工具。
 
 ## Rintel 用来做什么
 
@@ -51,12 +64,7 @@ Git merge         ≠ Canonical CURRENT
 
 ## 给 AI Agent 使用
 
-当前 `main` checkout 包含本地 stdio MCP server。安装后，在 clone 的目录中为 Codex 添加：
-
-```bash
-codex mcp add rintel -- "$PWD/rintel" mcp
-codex mcp list
-```
+当前 `main` checkout 包含[快速开始](#快速开始)配置的本地 stdio MCP server。先注册并索引仓库，再通过 Agent 查询。如果 UI 和 MCP 启动时使用不同的 `RINTEL_DATA_HOME` 或 `RINTEL_DATABASE_URL`，它们可能指向不同的 datastore；找不到仓库时，请在 MCP 环境中查看 `./rintel doctor`。
 
 默认 MCP surface 以只读为主。显式运行 `./rintel mcp --preset design-execute` 才会暴露额外的、已有且受约束的设计与 workspace 工具；这不授予任意 shell、owner approval 或 Canonical publication 权限。实际可用工具以 MCP `tools/list` 为准。Codex 本地 stdio 路径经过测试；其他 MCP client 的互操作性需要在相应 client 中验证。
 
@@ -66,7 +74,7 @@ codex mcp list
 
 ## Human Workbench
 
-本地 UI 与 MCP Agent 使用同一证据模型，涉及仓库浏览、源码与证据检查、拓扑、架构、Flow、DesignChange、Runtime、Build/Test 和 Git 状态。已有浏览器自动化测试，但独立 Human usability 验证仍在进行。Workbench 目前属于 **Experimental**，布局和工作流可能变化。
+本地 UI 与 MCP Agent 使用同一证据模型，涉及仓库浏览、源码与证据检查、拓扑、架构、Flow、DesignChange、Runtime、Build/Test 和 Git 状态。Workbench 仍在开发中，布局和工作流可能变化；欢迎大家试用，并通过[支持渠道](SUPPORT.md)反馈。
 
 ## 本地优先与安全默认值
 
@@ -86,13 +94,13 @@ codex mcp list
 | Build/Test、Git 协作 | 需配置并获得相应授权 |
 | Compiler/link、Runtime 证据 | 取决于 Provider、构建上下文和采集覆盖 |
 | Data/performance 结论 | 只有实际测量证据存在时才能给出 |
-| 图形化 Workbench | Experimental / 测试中 |
+| 图形化 Workbench | 开发中，欢迎试用和反馈 |
 | 可复用任务 Skills、更多 client 集成 | 开发中；不是已发布承诺 |
 
 Rintel 的目标是为理解、设计、执行和验证提供共同底座，而不是给 Agent 再建一套 truth model：证据在底层，行动在上层，不暗中猜测。
 
 ## 更多资料
 
-实现规格、验收报告与实验保留在 [`docs/`](docs/) 和 [`analysis_tournament/`](analysis_tournament/)，不再堆进 README。项目政策见[贡献指南](CONTRIBUTING.md)、[安全说明](SECURITY.md)、[支持渠道](SUPPORT.md)。
+后续方向见[路线图](ROADMAP.md)。实现规格、验收报告与实验保留在 [`docs/`](docs/) 和 [`analysis_tournament/`](analysis_tournament/)，不再堆进 README。项目政策见[贡献指南](CONTRIBUTING.md)、[安全说明](SECURITY.md)、[支持渠道](SUPPORT.md)。
 
 采用 [Apache-2.0 许可证](LICENSE)；另见 [NOTICE](NOTICE) 和[商标说明](TRADEMARKS.md)。

@@ -4,20 +4,33 @@
 
 [简体中文](README.zh-CN.md)
 
-> **Active development.** The local CLI, API, and MCP interface are usable today. The graphical Workbench is **experimental / in testing**. Advanced compiler, link, runtime, data, and performance evidence depends on what has actually been collected for a repository.
+> **Active development.** The local MCP interface, CLI, and API are usable today. We recommend starting with MCP. The graphical Workbench is still under development; everyone is welcome to try it and share feedback. Advanced compiler, link, runtime, data, and performance evidence depends on what has actually been collected for a repository.
 
 ## Quick start
 
-This is the recommended path for a new local installation:
+Install Rintel locally:
 
 ```bash
 git clone https://github.com/kwc-k/rintel-core.git
 cd rintel-core
 ./install.sh
+```
+
+Register and index a local repository once through the Workbench:
+
+```bash
 ./rintel serve
 ```
 
-Open <http://127.0.0.1:8000>, then add a local repository to register and index it. The installer needs Git for the clone, `uv`, Node.js 20+, and either `npx` or pnpm 11.22.0. It uses `uv` to obtain Python 3.12 in a project environment and builds the local UI from locked dependencies. PostgreSQL is not required: SQLite is the default. Run `./rintel doctor` (or `./rintel doctor --json`) to see required and optional capabilities.
+Open <http://127.0.0.1:8000> and add your repository. Then, from the Rintel clone, register the local stdio MCP server with Codex:
+
+```bash
+./rintel doctor
+codex mcp add rintel -- "$PWD/rintel" mcp
+codex mcp list
+```
+
+MCP is the recommended first path for exploring the indexed repository with an AI agent. This starts a local process against the same product datastore; it is not a hosted MCP service. The Workbench remains available for setup and visual exploration. The installer needs Git for the clone, `uv`, Node.js 20+, and either `npx` or pnpm 11.22.0. It uses `uv` to obtain Python 3.12 in a project environment and builds the local UI from locked dependencies. PostgreSQL is not required: SQLite is the default. `./rintel doctor --json` also reports MCP readiness, datastore identity, and the exposed tool surface.
 
 ## What Rintel is for
 
@@ -51,12 +64,7 @@ Supporting material may include source spans, indexer or compiler observations, 
 
 ## Use Rintel with an AI agent
 
-The current `main` checkout includes a local stdio MCP server. After installation, add it to Codex from the cloned directory:
-
-```bash
-codex mcp add rintel -- "$PWD/rintel" mcp
-codex mcp list
-```
+The current `main` checkout includes the local stdio MCP server configured in [Quick start](#quick-start). Use it after registering and indexing a repository. If the UI and MCP are launched with different `RINTEL_DATA_HOME` or `RINTEL_DATABASE_URL` settings, they can point to different datastores; check `./rintel doctor` in the MCP environment when a repository is missing.
 
 The default MCP surface is read-oriented. An explicit `./rintel mcp --preset design-execute` exposes additional existing, bounded design/workspace tools; it does not grant arbitrary shell, owner approval, or canonical publication authority. MCP `tools/list` reports the actual surface. The Codex local stdio path has been tested; interoperability with other MCP clients should be verified in those clients.
 
@@ -66,7 +74,7 @@ For example, ask the agent:
 
 ## Human Workbench
 
-The local UI uses the same evidence model for repository exploration, source and evidence inspection, topology, architecture, flow, design changes, runtime, build/test, and Git state. Browser automation exists, but independent human usability validation is still in progress. Treat the Workbench as **experimental**; its layout and workflow may change.
+The local UI uses the same evidence model for repository exploration, source and evidence inspection, topology, architecture, flow, design changes, runtime, build/test, and Git state. The Workbench is still under development; its layout and workflow may change. Everyone is welcome to try it and share feedback through [Support](SUPPORT.md).
 
 ## Local-first and safe by default
 
@@ -86,13 +94,13 @@ Re-run `./install.sh` to update locked application dependencies. Stop Rintel bef
 | Build/test and Git collaboration | Available when configured and authorized |
 | Compiler/link and runtime evidence | Conditional on provider, build context, and capture coverage |
 | Data/performance conclusions | Only where measured evidence exists |
-| Graphical Workbench | Experimental / in testing |
+| Graphical Workbench | Under development; open to testing and feedback |
 | Reusable task Skills and broader client integrations | In development; not a shipped promise |
 
 The aim is a shared substrate for understanding, design, execution, and verification—not a second truth model for agents. Evidence underneath; action on top; no silent guesses.
 
 ## More information
 
-Implementation specifications, acceptance reports, and experiments live under [`docs/`](docs/) and [`analysis_tournament/`](analysis_tournament/), rather than in this README. See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and [Support](SUPPORT.md) for project policies.
+See the [Roadmap](ROADMAP.md) for current direction. Implementation specifications, acceptance reports, and experiments live under [`docs/`](docs/) and [`analysis_tournament/`](analysis_tournament/), rather than in this README. See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and [Support](SUPPORT.md) for project policies.
 
 Licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) and [trademark guidance](TRADEMARKS.md).
