@@ -7,7 +7,8 @@ READ_TOOLS = (
     "query_data_interface", "classify_evidence_authority", "read_resource",
 )
 DESIGN_EXECUTE_TOOLS = READ_TOOLS + (
-    "create_design", "design_patch", "validate_design", "get_change_workspace",
+    "create_design", "design_patch", "mutate_flow_design",
+    "validate_design", "get_change_workspace",
     "get_git_collaboration", "get_agent_workspace", "request_agent_execution",
 )
 PRESETS = {"read": READ_TOOLS, "design-execute": DESIGN_EXECUTE_TOOLS}

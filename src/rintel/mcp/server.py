@@ -54,7 +54,8 @@ def _evidence_revision() -> str:
 
 try:
     from rintel.design_lifecycle import (
-        AcceptanceCriterion, DesignLifecycleService, PlanChange,
+        AcceptanceCriterion, DesignLifecycleError, DesignLifecycleService,
+        DesignMutation, PlanChange,
     )
     from rintel.design_lifecycle.projection import workspace_projection
 except Exception:  # pragma: no cover
@@ -1591,6 +1592,7 @@ def t_create_design(p: dict) -> dict:
     return {
         "summary": f"design change opened: {change.id}",
         "design_id": change.id, "change_id": change.id,
+        "design_revision": change.design_revision.id,
         "route": f"/design-changes/{change.id}",
         "state": change.state.value,
         "next": ["design_patch", "validate_design"],
@@ -1626,8 +1628,17 @@ def t_design_patch(p: dict) -> dict:
                 "before": {"state": before.state.value,
                            "design_revision": before.design_revision.id},
                 "after": sketch, "affected_design_ids": [change_id]}
+    expected_revision = str(p.get("expected_design_revision") or "")
+    if not expected_revision:
+        raise DesignLifecycleError(
+            "expected_design_revision_required",
+            "applying a design patch requires expected_design_revision")
+    if expected_revision != before.design_revision.id:
+        raise DesignLifecycleError(
+            "stale_design_revision", "design revision has advanced")
     after = svc.apply_command(change_id, PlanChange(
-        actor="agent:rintel-mcp", expected_changes=tuple(normalized)))
+        actor="agent:rintel-mcp", expected_changes=tuple(normalized),
+        expected_version=before.version))
     return {
         "summary": f"{len(normalized)} design claim(s) planned",
         "change_id": change_id, "design_id": change_id,
@@ -1635,6 +1646,66 @@ def t_design_patch(p: dict) -> dict:
         "design_revision": after.design_revision.id,
         "drc": after.design_drc,
         "route": f"/design-changes/{change_id}",
+    }
+
+
+_FLOW_STABLE_TARGET = {
+    "add_block": "flow_id", "update_block": "block_id",
+    "delete_block": "block_id", "add_port": "block_id",
+    "update_port": "port_id", "delete_port": "port_id",
+    "add_net": "source_port_id", "update_net": "net_id",
+    "delete_net": "net_id",
+}
+
+
+def t_mutate_flow_design(p: dict) -> dict:
+    """Revision-guarded harness write over existing DesignLifecycleService.
+
+    EDA ordinals are never accepted as mutation identity.  This is the formal
+    MCP path; legacy REST compatibility remains a separate contract.
+    """
+    change_id = str(p.get("change_id") or "")
+    expected_revision = str(p.get("expected_design_revision") or "")
+    stable_id = str(p.get("stable_id") or "")
+    operation = str(p.get("operation") or "")
+    ops = p.get("ops")
+    if not change_id or not expected_revision or not stable_id:
+        raise DesignLifecycleError(
+            "revision_bound_identity_required",
+            "change_id, stable_id and expected_design_revision are required")
+    if operation not in _FLOW_STABLE_TARGET or not isinstance(ops, list) or len(ops) != 1 \
+            or not isinstance(ops[0], dict):
+        raise DesignLifecycleError(
+            "invalid_flow_mutation", "one supported Flow mutation payload is required")
+    payload = dict(ops[0])
+    target_field = _FLOW_STABLE_TARGET[operation]
+    if stable_id != payload.get(target_field):
+        raise DesignLifecycleError(
+            "stable_id_mismatch", f"stable_id must equal payload.{target_field}")
+    svc = DesignLifecycleService(store())
+    before = svc.get_change(change_id)
+    if before.design_revision.id != expected_revision:
+        raise DesignLifecycleError(
+            "stale_design_revision", "design revision has advanced")
+    ref = before.design_revision.flow_model_ref
+    flow_id = str(payload.get("flow_id") or "")
+    if ref is None or flow_id != ref.identity:
+        raise DesignLifecycleError(
+            "flow_binding_mismatch", "mutation must target the bound FlowModel ID")
+    from rintel.flow.eda_address import flow_design_digest
+    if flow_design_digest(store(), flow_id) != ref.revision:
+        raise DesignLifecycleError(
+            "stale_flow_model", "bound FlowModel changed since this design revision")
+    after = svc.apply_command(change_id, DesignMutation(
+        actor="agent:rintel-mcp", plane="flow", operation=operation,
+        payload=payload, expected_version=before.version,
+        expected_design_revision=expected_revision))
+    return {
+        "change_id": change_id, "stable_id": stable_id,
+        "state": after.state.value,
+        "design_revision": after.design_revision.id,
+        "flow_model_ref": vars(after.design_revision.flow_model_ref),
+        "mutation_result": svc.receipts(change_id)[-1].payload["result"],
     }
 
 
@@ -1659,13 +1730,97 @@ def t_validate_design(p: dict) -> dict:
 def t_get_change_workspace(p: dict) -> dict:
     """The same validated read substrate used by REST and the Human UI."""
     change_id = str(p.get("change_id") or p.get("design_id") or "")
+    node_id = p.get("node_id")
     selector = p.get("relation_selector")
     if selector is not None and not isinstance(selector, dict):
         return {"error": {"code": "invalid_relation_selector",
                           "message": "relation_selector must be an object"}}
+    if node_id is not None and (not isinstance(node_id, str) or not node_id):
+        return {"error": {"code": "invalid_node_id",
+                          "message": "node_id must be a stable non-empty Flow node ID"}}
     try:
-        return workspace_projection(DesignLifecycleService(store()), change_id,
-                                    relation_selector=selector)
+        svc = DesignLifecycleService(store())
+        change = svc.get_change(change_id)
+        ref = change.design_revision.flow_model_ref
+        if node_id is not None:
+            if ref is None:
+                return {"error": {"code": "FLOW_NOT_BOUND",
+                                  "message": "DesignRevision has no bound FlowModel"}}
+            from rintel.flow.service import FlowService
+            from rintel.store import FlowError
+            flow_svc = FlowService(store())
+            try:
+                flow = flow_svc.require_flow(ref.identity)
+            except FlowError:
+                return {"error": {"code": "STALE_CONTEXT",
+                                  "message": "bound FlowModel is unavailable"}}
+            if flow["repo_id"] != change.repo_id:
+                return {"error": {"code": "STALE_CONTEXT",
+                                  "message": "bound FlowModel belongs to another repository"}}
+            full = flow_svc.get_flow(ref.identity)
+            eda = full["eda"]
+            if eda["revision"] != ref.revision:
+                return {"error": {"code": "STALE_CONTEXT",
+                                  "message": "bound FlowModel changed since this DesignRevision",
+                                  "bound_revision": ref.revision}}
+            block = next((row for row in full["blocks"] if row["id"] == node_id), None)
+            if block is None:
+                return {"error": {"code": "NODE_NOT_FOUND",
+                                  "message": "node_id is not a stable ID in the bound FlowModel",
+                                  "node_id": node_id}}
+            ports = [row for row in full["ports"] if row["block_id"] == node_id]
+            def port_view(row: dict) -> dict:
+                return {key: row.get(key) for key in (
+                    "id", "name", "direction", "semantic_kind", "code_type",
+                    "position_order", "display_address", "eda_address",
+                    "port_contract", "expected_actual")}
+            def ordered(direction: str) -> list[dict]:
+                return [port_view(row) for row in sorted(
+                    (port for port in ports if port["direction"] == direction),
+                    key=lambda row: (row["port_contract"]["ordinal"], row["id"]))]
+            owned_port_ids = {row["id"] for row in ports}
+            incident_nets = [{key: row.get(key) for key in (
+                "id", "source_port_id", "target_port_id", "kind",
+                "display_address", "derived")}
+                for row in full["nets"] if row["source_port_id"] in owned_port_ids
+                or row["target_port_id"] in owned_port_ids]
+            return {
+                "change_id": change_id, "repo_id": change.repo_id,
+                "design_revision": change.design_revision.id,
+                "flow_model_id": ref.identity, "flow_revision": ref.revision,
+                "plane": "flow_design", "authority": "DESIGN_ANNOTATION",
+                "eda_node": {
+                    "id": block["id"], "name": block["name"], "kind": block["kind"],
+                    "display_address": block["display_address"],
+                    "eda_address": block["eda_address"],
+                    "binding": block.get("binding"), "symbol": block.get("symbol"),
+                    "inputs": ordered("input"), "outputs": ordered("output"),
+                    "incident_nets": incident_nets,
+                },
+            }
+        out = workspace_projection(svc, change_id, relation_selector=selector)
+        if ref is not None:
+            from rintel.flow.service import FlowService
+            from rintel.store import FlowError
+            flow_svc = FlowService(store())
+            try:
+                flow = flow_svc.require_flow(ref.identity)
+            except FlowError:
+                flow = None
+            if flow is None:
+                out["eda_design"] = {"status": "STALE_CONTEXT",
+                                     "reason": "flow_model_unavailable"}
+            elif flow["repo_id"] != change.repo_id:
+                out["eda_design"] = {"status": "STALE_CONTEXT",
+                                     "reason": "cross_repository_flow_reference"}
+            else:
+                eda = flow_svc.get_eda(ref.identity)
+                out["eda_design"] = (eda if eda["revision"] == ref.revision else {
+                    "status": "STALE_CONTEXT",
+                    "reason": "flow_design_revision_changed",
+                    "bound_revision": ref.revision,
+                })
+        return out
     except ValueError as exc:
         return {"error": {"code": "invalid_relation_selector",
                           "message": str(exc)}}
@@ -2849,7 +3004,16 @@ TOOLS: dict[str, tuple[Callable, dict]] = {
         "name": "design_patch", "description": "Preview or plan TO-BE claims on a DesignChange. Apply "
                                                "creates an immutable DESIGN_ANNOTATION revision and runs "
                                                "Design DRC; it never edits canonical evidence.",
-        "params": {"design_id": "str", "change_id": "str?", "mode": "str?", "ops": "list"}}),
+        "params": {"design_id": "str", "change_id": "str?", "mode": "str?",
+                   "ops": "list", "expected_design_revision": "str?"}}),
+    "mutate_flow_design": (t_mutate_flow_design, {
+        "name": "mutate_flow_design",
+        "description": "Rev-guarded Flow Design write through DesignLifecycleService. "
+                       "Requires a stable Flow/node/port/net ID and exact DesignRevision; "
+                       "Lx.Ny display addresses are not write identities. ops has one payload object.",
+        "params": {"change_id": "str", "expected_design_revision": "str",
+                   "stable_id": "str", "operation": "str", "ops": "list"},
+        "rules": {"enums": {"operation": list(_FLOW_STABLE_TARGET)}}}),
     "validate_design": (t_validate_design, {
         "name": "validate_design", "description": "Read Design DRC, expected-vs-actual and LVS results "
                                                   "from the shared DesignChange aggregate.",
@@ -2857,8 +3021,10 @@ TOOLS: dict[str, tuple[Callable, dict]] = {
     "get_change_workspace": (t_get_change_workspace, {
         "name": "get_change_workspace",
         "description": "Read the receipt-bound, typed Change Workspace projection "
-                       "shared with REST and the Human UI; unknown dimensions stay unknown.",
-        "params": {"change_id": "str"}}),
+                       "shared with REST and the Human UI; unknown dimensions stay unknown. "
+                       "With stable node_id, return one exact DesignRevision-bound Flow node "
+                       "with all IN/OUT ports, declared types, Expected/Actual, and incident nets.",
+        "params": {"change_id": "str", "node_id": "str?"}}),
     "get_git_collaboration": (t_get_git_collaboration, {
         "name": "get_git_collaboration",
         "description": "Read Git repository/worktree/merge queue status and the latest "

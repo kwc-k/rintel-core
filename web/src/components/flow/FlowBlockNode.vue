@@ -3,10 +3,11 @@
 // Evidence / Design / Suggested / Unknown visual distinction (badge + border
 // style, color is not the only signal).  Rendered inside an X6 vue-shape
 // (props: `node`, `graph` from @antv/x6-vue-shape).
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { uiText } from '../../lib/uiText'
 import type { FlowBlock, FlowPort } from '../../domain/flow'
-import { displayBlockName, typeDisplay } from '../../domain/flow'
+import { displayBlockName } from '../../domain/flow'
+import { layoutNodePorts } from './port-routing'
 
 const props = defineProps<{
   node: any
@@ -30,6 +31,56 @@ function onPortClick(portId: string): void {
 const block = computed<FlowBlock>(() => props.node?.data?.block ?? {})
 const ports = computed<FlowPort[]>(() => props.node?.data?.ports ?? [])
 const selected = computed<boolean>(() => !!props.node?.data?.selected)
+const portLayout = computed(() => layoutNodePorts(block.value, ports.value))
+const activePortId = ref<string | null>(null)
+const activePort = computed(() => ports.value.find((port) => port.id === activePortId.value))
+const popoverX = ref(0)
+const popoverY = ref(0)
+let portTrigger: HTMLElement | null = null
+
+function closePortInfo(returnFocus = false): void {
+  activePortId.value = null
+  document.removeEventListener('pointerdown', onOutsidePointer, true)
+  window.removeEventListener('keydown', onPopoverKeydown)
+  window.removeEventListener('resize', onViewportMove)
+  window.removeEventListener('scroll', onViewportMove, true)
+  if (returnFocus) portTrigger?.focus()
+  portTrigger = null
+}
+
+function onOutsidePointer(event: PointerEvent): void {
+  const target = event.target
+  const popover = document.getElementById(`port-info-${block.value.id}`)
+  if (target instanceof Node && (portTrigger?.contains(target) || popover?.contains(target))) return
+  closePortInfo()
+}
+
+function onPopoverKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') closePortInfo(true)
+}
+
+function onViewportMove(): void {
+  if (!portTrigger || !portTrigger.isConnected) { closePortInfo(); return }
+  const rect = portTrigger.getBoundingClientRect()
+  popoverX.value = Math.max(8, Math.min(rect.right + 8, window.innerWidth - 296))
+  popoverY.value = Math.max(8, Math.min(rect.top, window.innerHeight - 230))
+}
+
+function openPortInfo(port: FlowPort, event: MouseEvent): void {
+  if (activePortId.value === port.id) { closePortInfo(); return }
+  closePortInfo()
+  const trigger = event.currentTarget as HTMLElement
+  portTrigger = trigger
+  onViewportMove()
+  activePortId.value = port.id
+  document.addEventListener('pointerdown', onOutsidePointer, true)
+  window.addEventListener('keydown', onPopoverKeydown)
+  window.addEventListener('resize', onViewportMove)
+  window.addEventListener('scroll', onViewportMove, true)
+}
+
+watch(activePort, (port) => { if (!port && activePortId.value) closePortInfo() })
+onBeforeUnmount(() => closePortInfo())
 
 const ann = computed(() => {
   try {
@@ -59,14 +110,8 @@ const badge = computed(() => {
 })
 
 const file = computed(() => block.value.symbol?.path ?? '')
-const inputs = computed(() =>
-  ports.value
-    .filter((p) => p.direction === 'input' && p.semanticKind !== 'control')
-    .sort((a, b) => a.positionOrder - b.positionOrder))
-const outputs = computed(() =>
-  ports.value
-    .filter((p) => p.direction === 'output' && p.semanticKind !== 'control')
-    .sort((a, b) => a.positionOrder - b.positionOrder))
+const inputs = computed(() => portLayout.value.inputs)
+const outputs = computed(() => portLayout.value.outputs)
 const isComposite = computed(() => block.value.kind === 'composite')
 const isFunction = computed(() => block.value.kind === 'function')
 </script>
@@ -87,7 +132,7 @@ const isFunction = computed(() => block.value.kind === 'function')
   >
     <div class="fb-head">
       <span class="fb-kind">{{ isFunction ? 'ƒ' : isComposite ? '▣' : '◇' }}</span>
-      <span class="fb-name" :title="displayName">{{ displayName }}</span>
+      <span class="fb-name" :title="displayName"><span v-if="block.displayAddress" class="fb-address">{{ block.displayAddress }} · </span>{{ displayName }}</span>
       <span class="fb-badge" :class="badge.cls" :data-testid="`fb-badge-${block.id}`">{{ badge.text }}</span>
     </div>
     <div v-if="ann.description" class="fb-desc">{{ ann.description }}</div>
@@ -100,9 +145,14 @@ const isFunction = computed(() => block.value.kind === 'function')
           class="fb-port fb-in-port"
           :data-port-id="p.id"
           :data-block-id="block.id"
+          :style="{ top: `${portLayout.points[p.id]?.y ?? 44}px` }"
           @click.stop="onPortClick(p.id)"
         >
-          ● {{ p.name }}<em v-if="p.codeType">: {{ typeDisplay(p.codeType) }}</em>
+          <span v-if="p.portContract">IN{{ p.portContract.ordinal }} · </span>
+          <button type="button" class="fb-port-name" :data-testid="`port-name-${p.id}`"
+                  :aria-expanded="activePortId === p.id" :aria-controls="`port-info-${block.id}`"
+                  aria-haspopup="dialog" @pointerdown.stop @mousedown.stop
+                  @click.stop="openPortInfo(p, $event)">{{ p.name }}</button>
         </span>
       </div>
       <div class="fb-out">
@@ -111,18 +161,39 @@ const isFunction = computed(() => block.value.kind === 'function')
           class="fb-port fb-out-port"
           :data-port-id="p.id"
           :data-block-id="block.id"
+          :style="{ top: `${portLayout.points[p.id]?.y ?? 44}px` }"
           @click.stop="onPortClick(p.id)"
         >
-          {{ p.name }} ●<em v-if="p.codeType">: {{ typeDisplay(p.codeType) }}</em>
+          <span v-if="p.portContract">OUT{{ p.portContract.ordinal }} · </span>
+          <button type="button" class="fb-port-name" :data-testid="`port-name-${p.id}`"
+                  :aria-expanded="activePortId === p.id" :aria-controls="`port-info-${block.id}`"
+                  aria-haspopup="dialog" @pointerdown.stop @mousedown.stop
+                  @click.stop="openPortInfo(p, $event)">{{ p.name }}</button>
         </span>
       </div>
     </div>
     <div v-if="isComposite" class="fb-composite-hint">┅ {{ uiText('wb.circuit.enterComposite') }}</div>
   </div>
+  <Teleport to="body">
+    <section v-if="activePort" :id="`port-info-${block.id}`" class="fb-port-popover"
+             data-testid="port-type-popover" role="dialog"
+             :aria-label="`Port ${activePort.name} type details`"
+             :style="{ left: `${popoverX}px`, top: `${popoverY}px` }">
+      <div class="fb-popover-title">{{ activePort.displayAddress || activePort.name }}</div>
+      <div>Declared code type (Design): {{ activePort.codeType || 'UNKNOWN' }}</div>
+      <div>Expected generic type (Design): {{ activePort.portContract?.generic_type ?? 'UNKNOWN' }}</div>
+      <div>Expected dtype (Design): {{ activePort.portContract?.dtype ?? 'UNKNOWN' }}</div>
+      <div>Expected shape (Design): {{ activePort.portContract?.shape ?? 'UNKNOWN' }}</div>
+      <div>Actual: {{ activePort.expectedActual?.actual.status ?? 'UNKNOWN' }}</div>
+      <div class="fb-popover-muted">{{ activePort.expectedActual?.actual.reason ?? 'no_bound_port_evidence' }}</div>
+      <div class="fb-popover-id">port_id: {{ activePort.id }}</div>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped>
 .flow-block-node {
+  position: relative;
   width: 100%;
   height: 100%;
   background: var(--panel);
@@ -170,6 +241,7 @@ const isFunction = computed(() => block.value.kind === 'function')
   font-family: var(--mono);
   color: var(--text-primary);
 }
+.fb-address { color: var(--text-muted); font-weight: 500; }
 .fb-badge { font-size: 8px; letter-spacing: 0.5px; border-radius: 3px; padding: 1px 4px; }
 .fb-badge.existing { background: var(--ok-bg); color: var(--ok); }
 .fb-badge.modified { background: var(--warn-bg); color: var(--warn); }
@@ -194,9 +266,15 @@ const isFunction = computed(() => block.value.kind === 'function')
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fb-ports { display: flex; justify-content: space-between; gap: 6px; margin-top: 3px; flex: 1; }
-.fb-in, .fb-out { display: flex; flex-direction: column; justify-content: space-evenly; gap: 1px; min-width: 0; }
+.fb-ports { flex: 1; }
+.fb-in, .fb-out { display: contents; }
 .fb-port {
+  position: absolute;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 46%;
   font-size: 9.5px;
   font-family: var(--mono);
   color: var(--text);
@@ -205,8 +283,35 @@ const isFunction = computed(() => block.value.kind === 'function')
   text-overflow: ellipsis;
   padding: 0 2px;
 }
-.fb-port em { color: var(--text-muted); font-style: normal; font-size: 8.5px; }
-.fb-in-port { align-self: flex-start; }
-.fb-out-port { align-self: flex-end; }
+.fb-in-port { left: 8px; }
+.fb-out-port { right: 8px; }
+.fb-port-name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.fb-port-name:hover { text-decoration: underline; }
+.fb-port-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fb-port-popover {
+  position: fixed;
+  z-index: 5000;
+  width: min(280px, calc(100vw - 16px));
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font: 11px/1.5 var(--mono);
+  overflow-wrap: anywhere;
+}
+.fb-popover-title { font-weight: 700; margin-bottom: 6px; }
+.fb-popover-muted, .fb-popover-id { color: var(--text-muted); }
 .fb-composite-hint { font-size: 8.5px; color: var(--violet-text); margin-top: 2px; }
 </style>

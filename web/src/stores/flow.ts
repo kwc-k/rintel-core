@@ -207,6 +207,30 @@ export const useFlowStore = defineStore('flow', {
       this.positions = { ...(dto.layout ?? {}) }
     },
 
+    /** Observe external harness edits without replacing an in-progress canvas draft. */
+    async refreshIfRevisionChanged(): Promise<boolean> {
+      const flowId = this.flowId
+      if (!flowId || !this.dto) return false
+      const dto = await flowApi.getFlow(flowId)
+      if (this.flowId !== flowId || dto.eda?.revision === this.dto.eda?.revision) return false
+      this.dto = dto
+      this.positions = { ...(dto.layout ?? {}) }
+      if (this.selectedBlockId && !dto.blocks.some((b) => b.id === this.selectedBlockId)) {
+        this.selectedBlockId = ''
+        this.selectedPortId = ''
+      }
+      if (this.selectedPortId && !dto.ports.some((p) => p.id === this.selectedPortId)) {
+        this.selectedPortId = ''
+      }
+      if (this.selectedNetId && !dto.nets.some((n) => n.id === this.selectedNetId)) {
+        this.selectedNetId = ''
+      }
+      if (this.currentParentBlockId && !dto.blocks.some((b) => b.id === this.currentParentBlockId)) {
+        this.currentParentBlockId = ''
+      }
+      return true
+    },
+
     selectBlock(id: string): void {
       this.selectedBlockId = id
       this.selectedNetId = ''

@@ -3,7 +3,7 @@
 // Circuit pane inside the workbench shell: header (breadcrumb + undo/redo
 // + DRC/LVS/Synthesis toggles + design status), palette, X6 canvas,
 // inspector, agent chrome.  LVS/Synthesis panels live in the shell dock.
-import { onMounted, ref, computed } from 'vue'
+import { onBeforeUnmount, onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useFlowStore, registerFlowToast } from '../stores/flow'
@@ -43,6 +43,8 @@ const promptError = ref('')
 const showCompositeForm = ref(false)
 
 const noFlow = computed(() => !flow.flow && !flow.loading)
+let externalRefreshTimer: ReturnType<typeof setInterval> | undefined
+let externalRefreshPending = false
 
 const scopeName = computed(() => {
   if (!flow.currentParentBlockId) return flow.flow?.name ?? ''
@@ -55,9 +57,21 @@ onMounted(async () => {
   wb.setFlow(id)
   try {
     await flow.loadFlow(id)
+    // The harness writes through DesignLifecycleService; the canvas observes
+    // its revision instead of keeping an independent mutable tutorial state.
+    externalRefreshTimer = setInterval(async () => {
+      if (externalRefreshPending || document.hidden) return
+      externalRefreshPending = true
+      try { await flow.refreshIfRevisionChanged() }
+      catch { /* next poll retries; never infer an accepted revision */ }
+      finally { externalRefreshPending = false }
+    }, 2000)
   } catch {
     // pane keeps its empty state; user can create/open a circuit
   }
+})
+onBeforeUnmount(() => {
+  if (externalRefreshTimer) clearInterval(externalRefreshTimer)
 })
 
 async function createBlock(kind: 'function' | 'object' | 'composite' | 'proposed'): Promise<void> {
@@ -118,6 +132,12 @@ async function renameFlow(): Promise<void> {
         <span v-if="flow.currentParentBlockId" class="fv-scope">· {{ t('topbar.newTopologyTitle') }}: {{ scopeName }}</span>
       </nav>
       <div class="fv-spacer"></div>
+      <span v-if="flow.dto?.designActivity?.status === 'RECORDED'"
+            class="fv-activity mono" data-testid="harness-design-operation"
+            :title="`Receipt ${flow.dto.designActivity.receipt_id} · ${flow.dto.designActivity.design_revision}`">
+        {{ flow.dto.designActivity.actor?.startsWith('agent:') ? 'Harness' : 'Design' }}
+        last recorded: {{ flow.dto.designActivity.operation }}
+      </span>
       <span
         v-if="flow.designModified"
         class="pill modified"
@@ -204,6 +224,7 @@ async function renameFlow(): Promise<void> {
   background: var(--truth-derived-bg); font-size: 10.5px; color: var(--text-secondary);
 }
 .fv-plane-note { color: var(--text-muted); }
+.fv-activity { font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
 .flow-view {
   height: 100%;
   min-height: 420px;

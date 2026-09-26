@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ..lvs.flow_runner import design_from_flow_dto
+from ..lvs.flow_runner import _edges_for, design_from_flow_dto
 
 
 def flow_views(dto: dict) -> tuple[dict, dict]:
@@ -32,24 +32,11 @@ def code_side_from_store(store, repo_id: str, sid: str,
     from ..lvs.signatures import build_code_side_from_rows
 
     rows = store.all_nodes(repo_id, sid)
-    edges = []
-    for e in store.all_edges(repo_id, sid):
-        kind = (e.get("kind") or "").upper()
-        kind = "CALL" if kind == "CALLS" else kind
-        if kind not in ("CALL", "DATA", "STATE", "CONTROL", "TIME",
-                        "RESOURCE"):
-            continue
-        edges.append({"kind": kind,
-                      "source": e.get("src_id") or e.get("source"),
-                      "target": e.get("dst_id") or e.get("target"),
-                      "truth_class": "OBSERVED",
-                      "execution_modality": "MUST",
-                      "target_resolution": "EXACT",
-                      "coverage": "COMPLETE"})
+    # Synthesis plan/apply verification must use the same admitted support
+    # projection as product LVS; a graph edge alone is not a strong claim.
+    edges = _edges_for(store, repo_id, sid, source_root=root)
     side = build_code_side_from_rows(rows, edges, root, sid)
-    side.call_capability = ("COMPLETE" if
-                            store.unresolved_count(repo_id, sid) == 0
-                            else "PARTIAL")
+    side.call_capability = "PARTIAL"
     side.data_capability = "PARTIAL"
     return side
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from rintel.provider_arch import EvidenceCandidate
 
@@ -18,7 +18,9 @@ def _walk(node: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
 def audit_direct_body(
         ast: Mapping[str, Any], diagnostics: Mapping[str, Any], *,
         source: Path, subject_id: str, candidates: tuple[EvidenceCandidate, ...],
-        existing_edges: set[str]) -> tuple[bool, list[str], Counter[str]]:
+        existing_edges: set[str], subject_name: str | None = None,
+        resolve_target: Callable[[str], str | None] | None = None,
+        ) -> tuple[bool, list[str], Counter[str]]:
     """Prove all CallExpr in one global C body are known direct calls.
 
     The provider's CALL facts are independently compared with the AST callee
@@ -34,7 +36,7 @@ def audit_direct_body(
             if not isinstance(result, Mapping) or result.get("level") in {
                     "error", "fatal"}:
                 reasons.append("clang_error_diagnostic")
-    name = subject_id.removeprefix("node:FUNCTION:")
+    name = subject_name or subject_id.removeprefix("node:FUNCTION:")
     if not name or name == subject_id or "::" in name:
         reasons.append("subject_not_global_c_function")
     bodies: list[Mapping[str, Any]] = []
@@ -91,7 +93,11 @@ def audit_direct_body(
         if ref.get("kind") != "FunctionDecl" or not isinstance(ref.get("name"), str):
             reasons.append("indirect_or_ambiguous_callee")
             continue
-        target = f"node:FUNCTION:{ref['name']}"
+        target = (resolve_target(ref["name"]) if resolve_target else
+                  f"node:FUNCTION:{ref['name']}")
+        if target is None:
+            reasons.append("direct_target_identity_unresolved")
+            continue
         direct[target] += 1
 
     staged = Counter(str(item.object) for item in candidates

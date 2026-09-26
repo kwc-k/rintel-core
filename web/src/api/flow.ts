@@ -39,6 +39,10 @@ const SNAKE: Record<string, string> = {
   design_nets: 'designNets',
   checked_bindings: 'checkedBindings',
   root_path: 'rootPath',
+  display_address: 'displayAddress',
+  eda_address: 'edaAddress',
+  port_contract: 'portContract',
+  expected_actual: 'expectedActual',
 }
 
 function camelizeRow<T>(row: unknown): T {
@@ -66,6 +70,8 @@ function camelizeDto(raw: unknown): FlowDto {
     layout: d.layout ?? {},
     repo: d.repo ? { id: d.repo.id, rootPath: d.repo.root_path } : null,
     notes: d.notes ?? [],
+    eda: d.eda,
+    designActivity: d.design_activity,
   }
 }
 

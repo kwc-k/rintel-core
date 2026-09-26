@@ -46,6 +46,31 @@ export interface BlockBinding {
   bindingKind: string
 }
 
+/** Display ordinals are revision-scoped; machine writes still use stable IDs. */
+export interface EdaAddress {
+  revision: string
+  machine_path: string
+  display: { path: string; layer_ordinal?: number; node_ordinal?: number; port_ordinal?: number }
+}
+
+export interface PortContractV0 {
+  version: string
+  authority: 'DESIGN_ANNOTATION'
+  port_id: string
+  owner_node_id: string
+  direction: 'IN' | 'OUT'
+  ordinal: number
+  name: string
+  semantic_kind: string
+  port_family: string
+  semantic_object: string
+  generic_type: string
+  dtype: string
+  rank: number | 'UNKNOWN'
+  shape: string | Array<string | number>
+  unknown_fields: string[]
+}
+
 export interface FlowPort {
   id: string
   flowModelId: string
@@ -55,6 +80,15 @@ export interface FlowPort {
   semanticKind: SemanticKind
   codeType?: string | null
   positionOrder: number
+  displayAddress?: string
+  edaAddress?: EdaAddress
+  portContract?: PortContractV0
+  expectedActual?: {
+    version: 'port-expected-actual/v0'
+    expected: PortContractV0
+    actual: { status: 'UNKNOWN'; reason: string }
+    comparison: 'UNKNOWN'
+  }
 }
 
 export interface FlowBlock {
@@ -69,6 +103,8 @@ export interface FlowBlock {
   binding?: BlockBinding | null
   symbol?: SymbolRef | null
   ports?: FlowPort[]
+  displayAddress?: string
+  edaAddress?: EdaAddress
 }
 
 export interface FlowNet {
@@ -82,6 +118,8 @@ export interface FlowNet {
   sourceBlockId?: string | null
   targetBlockId?: string | null
   derived: boolean
+  displayAddress?: string
+  edaAddress?: EdaAddress
 }
 
 export interface FlowLayoutPos {
@@ -98,6 +136,18 @@ export interface FlowDto {
   layout: Record<string, FlowLayoutPos>
   repo?: { id: string; rootPath: string } | null
   notes?: string[]
+  eda?: { revision: string; address_contract_version: string; port_contract_version: string }
+  designActivity?: {
+    status: 'RECORDED' | 'UNKNOWN' | 'AMBIGUOUS'
+    meaning?: 'last_completed_operation'
+    change_id?: string
+    design_revision?: string
+    receipt_id?: string
+    actor?: string
+    operation?: string
+    authority?: 'DESIGN_ANNOTATION'
+    reason?: string
+  }
 }
 
 export interface ValidateReport {

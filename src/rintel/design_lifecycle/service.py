@@ -218,6 +218,13 @@ class DesignLifecycleService:
             raise DesignLifecycleError(
                 "stale_preflight", "change version has advanced",
                 {"expected_version": expected_version, "actual_version": before.version})
+        expected_design_revision = getattr(command, "expected_design_revision", None)
+        if (expected_design_revision is not None and
+                expected_design_revision != before.design_revision.id):
+            raise DesignLifecycleError(
+                "stale_design_revision", "design revision has advanced",
+                {"expected_design_revision": expected_design_revision,
+                 "actual_design_revision": before.design_revision.id})
         if before.state in {ChangeState.CLOSED, ChangeState.ABANDONED}:
             raise DesignLifecycleError("terminal_change", "terminal change is immutable")
         now = self.clock()
@@ -800,7 +807,9 @@ class DesignLifecycleService:
                     flow_id, block_id=p["block_id"], name=p["name"],
                     direction=p["direction"], semantic_kind=p["semantic_kind"],
                     code_type=p.get("code_type"),
-                    position_order=int(p.get("position_order", 0)), meta=p.get("meta"))
+                    position_order=(int(p["position_order"])
+                                    if p.get("position_order") is not None else None),
+                    meta=p.get("meta"))
             elif op == "update_port":
                 result = svc.update_port(
                     flow_id, p["port_id"], name=p.get("name"),
@@ -833,16 +842,8 @@ class DesignLifecycleService:
 
     def _flow_design_digest(self, flow_id: str) -> str:
         """Bind stored TO-BE state, never live source-code DTO enrichment."""
-        from ..flow.service import FlowService
-        payload = {
-            "flow": FlowService(self.store).require_flow(flow_id),
-            "blocks": self.store.flow_blocks(flow_id),
-            "ports": self.store.flow_ports(flow_id),
-            "nets": self.store.flow_nets(flow_id),
-            "bindings": self.store.flow_bindings(flow_id),
-            "layout": self.store.flow_layout(flow_id),
-        }
-        return "flow-design-v1:" + _digest(payload)
+        from ..flow.eda_address import flow_design_digest
+        return flow_design_digest(self.store, flow_id)
 
     def get_change(self, change_id: str) -> DesignChange:
         change = self.repo.get(change_id)

@@ -251,8 +251,12 @@ def request_reindex(change_id: str, body: RequestReindexBody, request: Request,
         job = jobs.create("index", change.repo_id)
         result = service.apply_command(change_id, RequestReindex(
             actor=body.actor, job_id=job["id"]))
+        bound_revision = result.implementation["index_job"]["input_canonical_revision"]
+        snapshot = store.snapshot(bound_revision)
+        source_commit = snapshot.get("commit_sha") if snapshot else None
         jobs.enqueue(job, make_index_runner(
-            request.app.state.store_factory, change.repo_id))
+            request.app.state.store_factory, change.repo_id,
+            commit=source_commit))
         return {"change_id": result.id, "change_version": result.version,
                 "job_id": job["id"], "status": "pending"}
     except DesignLifecycleError as exc:
@@ -373,7 +377,8 @@ def command(change_id: str, req: CommandBody,
                     "design_mutation requires plane and operation")
             cmd = DesignMutation(
                 actor=req.actor, plane=req.plane,
-                operation=req.operation, payload=req.payload)
+                operation=req.operation, payload=req.payload,
+                expected_design_revision=req.expected_design_revision)
         elif req.command == "plan":
             cmd = PlanChange(
                 actor=req.actor, expected_changes=tuple(req.expected_changes),
@@ -418,6 +423,12 @@ def command(change_id: str, req: CommandBody,
         result = service.apply_command(change_id, cmd).to_dict()
         if req.command == "design_mutation":
             result["mutation_result"] = service.receipts(change_id)[-1].payload["result"]
+            result["write_surface"] = {
+                "status": "DEPRECATED_COMPATIBILITY",
+                "replacement": "mutate_flow_design for revision-bound Flow MCP writes",
+                "required_context": ["change_id", "expected_design_revision",
+                                     "change_version", "stable_id"],
+            }
         return result
     except DesignLifecycleError as exc:
         raise _error(exc) from exc

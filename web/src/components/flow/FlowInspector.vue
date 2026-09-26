@@ -160,6 +160,10 @@ function short(canonical: string): string {
         <span class="tag" :class="block.state">{{ block.state }}</span>
         <span v-if="block.binding" class="tag bound" title="bound to evidence">✓</span>
       </div>
+      <section v-if="block.edaAddress" class="fi-sec" aria-label="EDA address">
+        <div class="mono">{{ block.displayAddress }} · node {{ block.id }}</div>
+        <div class="fi-muted mono" :title="block.edaAddress.revision">Design revision {{ block.edaAddress.revision }}</div>
+      </section>
 
       <section class="fi-sec">
         <label class="fi-label">{{ t('inspector.name') }}</label>
@@ -187,6 +191,15 @@ function short(canonical: string): string {
             <span class="mono">{{ p.semanticKind }}/{{ p.direction }} <b>{{ p.name }}</b>
               <em v-if="p.codeType">: {{ typeDisplay(p.codeType) }}</em>
             </span>
+            <details v-if="p.portContract" class="fi-port-contract">
+              <summary class="mono">{{ p.displayAddress }} · EXPECTED / ACTUAL</summary>
+              <div class="mono">port_id: {{ p.id }}</div>
+              <div>EXPECTED (DESIGN): direction {{ p.portContract.direction }} · type {{ p.portContract.generic_type }} · dtype {{ p.portContract.dtype }} · shape {{ p.portContract.shape }}</div>
+              <div>semantic: {{ p.portContract.semantic_kind }} / {{ p.portContract.semantic_object }}</div>
+              <div>Unknown: {{ p.portContract.unknown_fields.join(', ') || 'none' }}</div>
+              <div data-testid="port-actual">ACTUAL: {{ p.expectedActual?.actual.status ?? 'UNKNOWN' }} · {{ p.expectedActual?.actual.reason ?? 'no_bound_port_evidence' }}</div>
+              <div>Comparison: {{ p.expectedActual?.comparison ?? 'UNKNOWN' }}</div>
+            </details>
             <button class="fi-x" title="delete port" @click="removePort(p.id)">×</button>
           </li>
         </ul>
@@ -337,7 +350,10 @@ function short(canonical: string): string {
 .fi-binding { font-size: 10px; word-break: break-all; color: var(--text); }
 .fi-file { font-size: 10px; color: var(--text-muted); }
 .fi-ports { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.fi-port { display: flex; align-items: center; justify-content: space-between; font-size: 11px; }
+.fi-port { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; font-size: 11px; }
+.fi-port-contract { order: 2; flex-basis: 100%; color: var(--text-muted); font-size: 10px; overflow-wrap: anywhere; }
+.fi-port-contract summary { cursor: pointer; }
+.fi-port-contract > div { margin: 3px 0 3px 12px; }
 .fi-x { border: none; background: none; color: var(--text-muted); cursor: pointer; }
 .fi-port-form { display: flex; flex-wrap: wrap; gap: 3px; }
 .fi-port-form .fi-input { width: 90px; }

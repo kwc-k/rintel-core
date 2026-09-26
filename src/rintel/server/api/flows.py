@@ -91,7 +91,7 @@ class PortCreate(BaseModel):
     direction: str
     semantic_kind: str
     code_type: Optional[str] = None
-    position_order: int = 0
+    position_order: Optional[int] = None
     meta: Optional[dict] = None
 
 

@@ -50,15 +50,22 @@ export function applyDesignCommand(
     })
 }
 
-export function applyDesignMutation<T>(
+export async function applyDesignMutation<T>(
   plane: 'architecture' | 'flow', operation: string,
   payload: Record<string, unknown>, actor = 'human:ui',
 ): Promise<T> {
   const changeId = requireActiveDesignChange()
-  return apiPost<DesignMutationResponse<T>>(
+  const change = await apiGet<DesignChange>(`/design-changes/${changeId}`)
+  if (activeDesignChangeId !== changeId || change.id !== changeId) {
+    throw new Error('DesignChange context changed before mutation')
+  }
+  const response = await apiPost<DesignMutationResponse<T>>(
     `/design-changes/${changeId}/commands`,
-    { command: 'design_mutation', actor, plane, operation, payload },
-  ).then((response) => response.mutation_result)
+    { command: 'design_mutation', actor, plane, operation, payload,
+      change_version: change.version,
+      expected_design_revision: change.design_revision.id },
+  )
+  return response.mutation_result
 }
 
 export function getDesignChange(changeId: string): Promise<DesignChange> {

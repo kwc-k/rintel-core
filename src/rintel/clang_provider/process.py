@@ -229,3 +229,7 @@ def run(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
 
 
 __all__ = ["run"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

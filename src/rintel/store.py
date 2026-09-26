@@ -333,7 +333,7 @@ class Store(Protocol):
     def flow_create_port(self, flow_id: str, *, block_id: str, name: str,
                          direction: str, semantic_kind: str,
                          code_type: str | None = None,
-                         position_order: int = 0,
+                          position_order: int | None = None,
                          meta: dict | None = None) -> dict: ...
     def flow_update_port(self, flow_id: str, port_id: str, *,
                          name: str | None = None,
