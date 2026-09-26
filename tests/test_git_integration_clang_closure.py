@@ -8,9 +8,14 @@ from pathlib import Path
 from time import sleep
 
 from fastapi.testclient import TestClient
+import pytest
 
 from rintel.db import Database
 from rintel.indexer import Indexer
+
+pytestmark = pytest.mark.skipif(
+    not Path("/usr/bin/clang").is_file(),
+    reason="bounded AppleClang direct-call pilot requires /usr/bin/clang")
 
 
 def _git(repo: Path, *args: str) -> str:

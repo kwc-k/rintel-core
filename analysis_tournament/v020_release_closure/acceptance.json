@@ -52,7 +52,7 @@
     }
   },
   "release_artifact_preflight": {
-    "source_archive_two_builds_same_sha256": "938330d45339ef8c23d61510f51725f84c917da42e83b4ba646466a705d6d71d",
+    "source_archive_two_builds_same_sha256": "660b789fe665ac8de89e6effb63217309a07b55b19b2d807d796cc60c238a181",
     "archive_excludes_local_environment_and_datastore": true,
     "fresh_archive_install": "PASS_MACOS_ARM64_PRE_MERGE",
     "fresh_archive_tested_sha256": "132d16f9a992d4c64f6897c6d71e90ef0346b2c1469ebdf9090d1e58235acafe",

@@ -14,6 +14,10 @@ from rintel.design_lifecycle.models import DesignRef
 from rintel.git_integration_authority import GitIntegrationAuthority
 from rintel.indexer import Indexer
 
+pytestmark = pytest.mark.skipif(
+    not Path("/usr/bin/clang").is_file(),
+    reason="bounded AppleClang direct-call pilot requires /usr/bin/clang")
+
 
 @dataclass(frozen=True)
 class _Change:
