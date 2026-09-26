@@ -2,7 +2,7 @@
 // The server returns store-shaped (snake_case) rows; this module maps them
 // onto the camelCase domain model at the API boundary (single mapping point).
 import { apiFetch } from './client'
-import { applyDesignMutation } from './design-lifecycle'
+import { applyDesignMutation, type FlowMutationGuard } from './design-lifecycle'
 import type {
   FlowDto, FlowNet, FlowPort, FlowBlock, FlowModel, ValidateReport,
   WritebackPreview, WritebackResult,
@@ -86,6 +86,11 @@ function camelizeResult(raw: unknown): WritebackResult {
     binding: r.binding ? camelizeRow(r.binding) : null,
     block: r.block ? camelizeRow(r.block) : null,
   }
+}
+
+function mutateFlow<T>(operation: string, payload: Record<string, unknown>,
+  guard?: FlowMutationGuard): Promise<T> {
+  return applyDesignMutation<T>('flow', operation, payload, 'human:ui', guard)
 }
 
 export interface BlockCreateInput {
@@ -183,8 +188,9 @@ export function patchFlow(
   }).then(camelizeDto)
 }
 
-export function createBlock(flowId: string, input: BlockCreateInput): Promise<FlowBlock> {
-  return applyDesignMutation<FlowBlock>('flow', 'add_block', {
+export function createBlock(flowId: string, input: BlockCreateInput,
+  guard?: FlowMutationGuard): Promise<FlowBlock> {
+  return mutateFlow<FlowBlock>('add_block', {
       flow_id: flowId,
       kind: input.kind,
       name: input.name,
@@ -192,14 +198,14 @@ export function createBlock(flowId: string, input: BlockCreateInput): Promise<Fl
       parent_block_id: input.parentBlockId ?? null,
       code: input.code ?? null,
       meta: input.meta ?? null,
-  })
+  }, guard)
 }
 
 export function patchBlock(flowId: string, blockId: string, body: {
   name?: string; code?: string; state?: string; parentBlockId?: string | null
   clearParent?: boolean; meta?: Record<string, unknown> | null
-}): Promise<FlowBlock> {
-  return applyDesignMutation<FlowBlock>('flow', 'update_block', {
+}, guard?: FlowMutationGuard): Promise<FlowBlock> {
+  return mutateFlow<FlowBlock>('update_block', {
       flow_id: flowId, block_id: blockId,
       name: body.name ?? null,
       code: body.code ?? null,
@@ -207,15 +213,17 @@ export function patchBlock(flowId: string, blockId: string, body: {
       parent_block_id: body.parentBlockId ?? null,
       clear_parent: body.clearParent ?? false,
       meta: body.meta ?? null,
-  })
+  }, guard)
 }
 
-export function deleteBlock(flowId: string, blockId: string): Promise<unknown> {
-  return applyDesignMutation('flow', 'delete_block', { flow_id: flowId, block_id: blockId })
+export function deleteBlock(flowId: string, blockId: string,
+  guard?: FlowMutationGuard): Promise<unknown> {
+  return mutateFlow('delete_block', { flow_id: flowId, block_id: blockId }, guard)
 }
 
-export function createPort(flowId: string, input: PortCreateInput): Promise<FlowPort> {
-  return applyDesignMutation<FlowPort>('flow', 'add_port', {
+export function createPort(flowId: string, input: PortCreateInput,
+  guard?: FlowMutationGuard): Promise<FlowPort> {
+  return mutateFlow<FlowPort>('add_port', {
       flow_id: flowId,
       block_id: input.blockId,
       name: input.name,
@@ -224,14 +232,14 @@ export function createPort(flowId: string, input: PortCreateInput): Promise<Flow
       code_type: input.codeType ?? null,
       position_order: input.positionOrder ?? 0,
       meta: input.meta ?? null,
-  })
+  }, guard)
 }
 
 export function patchPort(flowId: string, portId: string, body: {
   name?: string; semanticKind?: string; codeType?: string | null
   clearType?: boolean; positionOrder?: number; meta?: Record<string, unknown> | null
-}): Promise<FlowPort> {
-  return applyDesignMutation<FlowPort>('flow', 'update_port', {
+}, guard?: FlowMutationGuard): Promise<FlowPort> {
+  return mutateFlow<FlowPort>('update_port', {
       flow_id: flowId, port_id: portId,
       name: body.name ?? null,
       semantic_kind: body.semanticKind ?? null,
@@ -239,35 +247,37 @@ export function patchPort(flowId: string, portId: string, body: {
       clear_type: body.clearType ?? false,
       position_order: body.positionOrder ?? null,
       meta: body.meta ?? null,
-  })
+  }, guard)
 }
 
-export function deletePort(flowId: string, portId: string): Promise<unknown> {
-  return applyDesignMutation('flow', 'delete_port', { flow_id: flowId, port_id: portId })
+export function deletePort(flowId: string, portId: string,
+  guard?: FlowMutationGuard): Promise<unknown> {
+  return mutateFlow('delete_port', { flow_id: flowId, port_id: portId }, guard)
 }
 
-export function createNet(flowId: string, input: NetCreateInput): Promise<FlowNet> {
-  return applyDesignMutation<FlowNet>('flow', 'add_net', {
+export function createNet(flowId: string, input: NetCreateInput,
+  guard?: FlowMutationGuard): Promise<FlowNet> {
+  return mutateFlow<FlowNet>('add_net', {
       flow_id: flowId,
       source_port_id: input.sourcePortId,
       target_port_id: input.targetPortId,
       kind: input.kind ?? 'control',
       label: input.label ?? null,
       meta: input.meta ?? null,
-  })
+  }, guard)
 }
 
 export function patchNet(flowId: string, netId: string, body: {
   kind?: string; label?: string | null; clearLabel?: boolean
   meta?: Record<string, unknown> | null
-}): Promise<FlowNet> {
-  return applyDesignMutation<FlowNet>('flow', 'update_net', {
+}, guard?: FlowMutationGuard): Promise<FlowNet> {
+  return mutateFlow<FlowNet>('update_net', {
       flow_id: flowId, net_id: netId,
       kind: body.kind ?? null,
       label: body.label ?? null,
       clear_label: body.clearLabel ?? false,
       meta: body.meta ?? null,
-  })
+  }, guard)
 }
 
 export function recordAgentAction(flowId: string, action: {
@@ -278,9 +288,9 @@ export function recordAgentAction(flowId: string, action: {
   before?: Record<string, unknown> | null
   after?: Record<string, unknown> | null
   ts?: number | null
-}): Promise<{ recorded: string; total: number }> {
-  return applyDesignMutation<{ recorded: string; total: number }>(
-    'flow', 'record_agent_action', { flow_id: flowId, action: {
+}, guard?: FlowMutationGuard): Promise<{ recorded: string; total: number }> {
+  return mutateFlow<{ recorded: string; total: number }>(
+    'record_agent_action', { flow_id: flowId, action: {
         agent_action_id: action.agentActionId,
         intent: action.intent,
         prompt: action.prompt ?? null,
@@ -288,19 +298,20 @@ export function recordAgentAction(flowId: string, action: {
         before: action.before ?? null,
         after: action.after ?? null,
         ts: action.ts ?? null,
-    } })
+    } }, guard)
 }
 
-export function deleteNet(flowId: string, netId: string): Promise<unknown> {
-  return applyDesignMutation('flow', 'delete_net', { flow_id: flowId, net_id: netId })
+export function deleteNet(flowId: string, netId: string,
+  guard?: FlowMutationGuard): Promise<unknown> {
+  return mutateFlow('delete_net', { flow_id: flowId, net_id: netId }, guard)
 }
 
 export function createComposite(
-  flowId: string, name: string, blockIds: string[],
+  flowId: string, name: string, blockIds: string[], guard?: FlowMutationGuard,
 ): Promise<FlowDto> {
-  return applyDesignMutation<FlowDto>('flow', 'create_composite', {
+  return mutateFlow<FlowDto>('create_composite', {
     flow_id: flowId, name, block_ids: blockIds,
-  }).then(camelizeDto)
+  }, guard).then(camelizeDto)
 }
 
 export function expandFlow(flowId: string): Promise<FlowDto> {

@@ -17,6 +17,8 @@ const emit = defineEmits<{
 }>()
 
 const nameDraft = ref('')
+const nameDraftRevision = ref('')
+const renameNotice = ref('')
 const newPort = ref({ name: '', direction: 'input' as 'input' | 'output', semanticKind: 'data' as string, codeType: '' })
 const compositeName = ref('New Group')
 const showMonaco = ref(false)
@@ -34,9 +36,27 @@ const statusCls = computed(() => (validation.value?.status ?? '').toLowerCase())
 
 watch(
   () => store.selectedBlockId,
-  () => {
-    if (block.value) nameDraft.value = block.value.name
-    if (showMonaco.value) unmountEditor() // per-block editor state
+  (_id, previousId) => {
+    nameDraft.value = block.value?.name ?? ''
+    nameDraftRevision.value = store.dto?.eda?.revision ?? ''
+    renameNotice.value = ''
+    if (previousId !== undefined && showMonaco.value) unmountEditor() // per-block editor state
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [block.value?.name, store.dto?.eda?.revision] as const,
+  ([name, revision], [previousName]) => {
+    if (revision !== nameDraftRevision.value) {
+      if (nameDraft.value !== name && nameDraft.value !== previousName) {
+        renameNotice.value = 'Design changed; unsaved rename was discarded.'
+      }
+      nameDraft.value = name ?? ''
+      nameDraftRevision.value = revision ?? ''
+    } else if (nameDraft.value === previousName) {
+      nameDraft.value = name ?? ''
+    }
   },
 )
 
@@ -91,6 +111,12 @@ onBeforeUnmount(unmountEditor)
 
 async function saveName(): Promise<void> {
   if (!block.value || !nameDraft.value.trim()) return
+  if (nameDraftRevision.value !== (store.dto?.eda?.revision ?? '')) {
+    nameDraft.value = block.value.name
+    nameDraftRevision.value = store.dto?.eda?.revision ?? ''
+    renameNotice.value = 'Design changed; unsaved rename was discarded.'
+    return
+  }
   if (nameDraft.value.trim() !== block.value.name) {
     await store.updateBlock(block.value.id, { name: nameDraft.value.trim() })
   }
@@ -167,7 +193,8 @@ function short(canonical: string): string {
 
       <section class="fi-sec">
         <label class="fi-label">{{ t('inspector.name') }}</label>
-        <input v-model="nameDraft" class="fi-input" @change="saveName" @keydown.enter="saveName" />
+        <input v-model="nameDraft" class="fi-input" @input="renameNotice = ''" @change="saveName" @keydown.enter="saveName" />
+        <p v-if="renameNotice" role="status" class="fi-muted">{{ renameNotice }}</p>
       </section>
 
       <section class="fi-sec">

@@ -47,4 +47,36 @@ describe('typed UI DesignMutation adapter', () => {
     expect(apiGet).not.toHaveBeenCalled()
     expect(apiPost).not.toHaveBeenCalled()
   })
+
+  it('rejects a stale Flow intent instead of rebinding it to the latest DesignRevision', async () => {
+    setActiveDesignChange('change-stable')
+    vi.mocked(apiGet).mockResolvedValue({
+      id: 'change-stable', version: 5,
+      design_revision: { id: 'design-rev-5', flow_model_ref: { identity: 'flow-stable', revision: 'flow-r3' } },
+    })
+    const guard = { flowId: 'flow-stable', revision: 'flow-r2', commits: 0 }
+
+    await expect(applyDesignMutation('flow', 'update_block', {
+      flow_id: 'flow-stable', block_id: 'node-stable', name: 'Old intent',
+    }, 'human:ui', guard)).rejects.toThrow('Flow design changed')
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('binds local history to the committed Flow revision returned by the server', async () => {
+    setActiveDesignChange('change-stable')
+    vi.mocked(apiGet).mockResolvedValue({
+      id: 'change-stable', version: 4,
+      design_revision: { id: 'design-rev-4', flow_model_ref: { identity: 'flow-stable', revision: 'flow-r2' } },
+    })
+    vi.mocked(apiPost).mockResolvedValue({
+      mutation_result: { id: 'node-stable' },
+      design_revision: { id: 'design-rev-5', flow_model_ref: { identity: 'flow-stable', revision: 'flow-r3' } },
+    })
+    const guard = { flowId: 'flow-stable', revision: 'flow-r2', commits: 0 }
+
+    await applyDesignMutation('flow', 'update_block', {
+      flow_id: 'flow-stable', block_id: 'node-stable', name: 'Local',
+    }, 'human:ui', guard)
+    expect(guard).toEqual({ flowId: 'flow-stable', revision: 'flow-r3', commits: 1 })
+  })
 })

@@ -283,6 +283,7 @@ export interface DesignTransaction {
   label: string
   before: string   // JSON snapshot of affected entities (ids + revisions)
   after: string
+  revision: string // exact Flow revision at the current Undo/Redo side
   ts: number
 }
 
