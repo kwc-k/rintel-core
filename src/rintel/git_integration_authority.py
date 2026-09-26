@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from .cross_layer_alignment import project_change_alignments
+from .coverage_authority.issuer import CoverageAuthority, CoverageUnavailable
+from .clang_provider.frontend import FrontendError
 from .db import Database
 from .design_lifecycle import DesignLifecycleService
 from .design_lifecycle.design_drc import run_design_drc
@@ -108,6 +110,56 @@ class GitIntegrationAuthority:
         })
         return result
 
+    def _issue_bound_clang_support(
+            self, change: Any, candidate: Database, snapshot_id: str,
+            source_root: Path, integration_head: str) -> tuple[str, list[dict]]:
+        """Ask the existing issuer about bound C control-net sources only.
+
+        Design selects the audit scope, never the evidence result. Missing or
+        unsuitable build context leaves the legacy projection UNKNOWN.
+        """
+        ref = change.design_revision.flow_model_ref
+        compdb = source_root / "compile_commands.json"
+        if ref is None or not compdb.is_file():
+            return snapshot_id, []
+        from .flow.service import FlowService
+        design = design_from_flow_dto(
+            FlowService(self.production_store).get_flow(ref.identity))
+        bindings = {block["id"]: block.get("binding")
+                    for block in design["blocks"]}
+        subjects = sorted({bindings.get(net.get("source_block_id"))
+                           for net in design["nets"]
+                           if net.get("kind") == "control"} - {None})
+        attempts: list[dict] = []
+        for subject_id in subjects:
+            node = candidate.node_by_id(change.repo_id, snapshot_id, subject_id)
+            if not node or node.get("kind") != "FUNCTION" or node.get(
+                    "language") != "c":
+                continue
+            try:
+                cert = CoverageAuthority(candidate).issue_direct_static_call(
+                    repo_id=change.repo_id, base_revision=snapshot_id,
+                    compile_commands=compdb, translation_unit=node["path"],
+                    subject_id=subject_id)
+            except (CoverageUnavailable, FrontendError, ValueError, OSError) as exc:
+                attempts.append({"subject": subject_id, "status": "UNAVAILABLE",
+                                 "reason": str(exc)})
+                continue
+            issued = cert.to_dict()
+            snapshot_id = issued["canonical_revision"]
+            snapshot = candidate.snapshot(snapshot_id)
+            if not snapshot or snapshot.get("commit_sha") != integration_head:
+                raise RuntimeError("Clang support overlay lost exact integration commit")
+            for attempt in attempts:
+                if attempt["status"] == "ISSUED":
+                    attempt["status"] = "SUPERSEDED"
+                    attempt["reason"] = "support receipt bound to earlier overlay revision"
+            attempts.append({"subject": subject_id, "status": "ISSUED",
+                             "certificate_id": issued["id"],
+                             "canonical_revision": snapshot_id,
+                             "completeness": issued["completeness"]})
+        return snapshot_id, attempts
+
     def audit(self, integration: dict, *, build_profile_id: str,
               test_profile_id: str,
               build_parameters: tuple[tuple[str, str], ...] = (),
@@ -123,11 +175,17 @@ class GitIntegrationAuthority:
             result = Indexer(
                 candidate, str(source_root), repo_id=change.repo_id, force=True,
                 commit=integration["integration_head"]).index()
-            snapshot = candidate.snapshot(result.snapshot_id) or {}
+            candidate_revision, clang_support = self._issue_bound_clang_support(
+                change, candidate, result.snapshot_id, source_root,
+                integration["integration_head"])
+            snapshot = candidate.snapshot(candidate_revision) or {}
+            if snapshot.get("commit_sha") != integration["integration_head"]:
+                raise RuntimeError("candidate snapshot is not bound to integration commit")
             candidate_receipt = self._receipt("CANDIDATE_INDEX", integration, {
                 "tree_sha": integration["integration_tree"],
                 "indexer_run_id": result.run_id,
-                "candidate_canonical_revision": result.snapshot_id,
+                "candidate_canonical_revision": candidate_revision,
+                "clang_support_attempts": clang_support,
                 "candidate_store_identity": f"sha256:{_digest(str(candidate_path))}",
                 "publication_policy": "CANDIDATE_ONLY",
                 "production_current_before": self.production_store.current_snapshot(
@@ -137,33 +195,33 @@ class GitIntegrationAuthority:
             drc = run_design_drc(change.design_revision.expected_changes, change.scope)
             drc_receipt = self._receipt("DRC", integration, {
                 "design_revision": change.design_revision.id,
-                "candidate_canonical_revision": result.snapshot_id,
+                "candidate_canonical_revision": candidate_revision,
                 "inputs": {
                     "design_revision": change.design_revision.id,
                     "scope_digest": _digest(change.scope),
-                    "candidate_snapshot": result.snapshot_id,
+                    "candidate_snapshot": candidate_revision,
                     "candidate_nodes": len(candidate.all_nodes(
-                        change.repo_id, result.snapshot_id)),
+                        change.repo_id, candidate_revision)),
                     "candidate_edges": len(candidate.all_edges(
-                        change.repo_id, result.snapshot_id)),
+                        change.repo_id, candidate_revision)),
                 },
                 "result": drc,
             })
-            lvs = self._lvs(change, candidate, result.snapshot_id, str(source_root))
+            lvs = self._lvs(change, candidate, candidate_revision, str(source_root))
             lvs_receipt = self._receipt("LVS", integration, {
                 "design_revision": change.design_revision.id,
-                "candidate_canonical_revision": result.snapshot_id,
+                "candidate_canonical_revision": candidate_revision,
                 "result": lvs,
             })
             candidate_change = replace(
                 change, implementation={**(change.implementation or {}),
-                                        "current_evidence_revision": result.snapshot_id})
+                                        "current_evidence_revision": candidate_revision})
             alignments = project_change_alignments(
                 candidate_change, store=candidate,
                 certificate_repository=candidate)
             alignment_receipt = self._receipt("ALIGNMENT", integration, {
                 "design_revision": change.design_revision.id,
-                "candidate_canonical_revision": result.snapshot_id,
+                "candidate_canonical_revision": candidate_revision,
                 "runtime_binding": "EXACT_OR_UNMEASURED",
                 "results": alignments,
             })
@@ -172,20 +230,20 @@ class GitIntegrationAuthority:
                 if item["alignment"].get("expected_actual") == "UNKNOWN"
                 or item["alignment"].get("contradiction_audit") is not None]
             integration = {**integration,
-                           "candidate_canonical_revision": result.snapshot_id}
+                           "candidate_canonical_revision": candidate_revision}
             build = self._execute(
                 integration, change, build_profile_id, "BUILD", build_parameters)
             test = self._execute(
                 integration, change, test_profile_id, "TEST", test_parameters)
             unsupported = candidate.unsupported_new_facts(
-                change.repo_id, result.snapshot_id, None)
+                change.repo_id, candidate_revision, None)
             semantic = {
-                "candidate_canonical_identity": result.snapshot_id,
+                "candidate_canonical_identity": candidate_revision,
                 "unsupported_fact_ids": unsupported,
                 "unresolved_count": candidate.unresolved_count(
-                    change.repo_id, result.snapshot_id),
+                    change.repo_id, candidate_revision),
                 "support_receipt_count": len(candidate.support_receipts_owned_by_paths(
-                    change.repo_id, result.snapshot_id, [""])),
+                    change.repo_id, candidate_revision, [""])),
             }
         finally:
             candidate.close()
@@ -281,8 +339,15 @@ class GitIntegrationAuthority:
             if current != result.snapshot_id or not snapshot or snapshot.get(
                     "commit_sha") != merged:
                 raise RuntimeError("published snapshot is not bound to merged Git commit")
+            current, clang_support = self._issue_bound_clang_support(
+                change, self.production_store, current,
+                Path(integration["repository_root"]).resolve(), merged)
+            snapshot = self.production_store.snapshot(current) or {}
+            if (self.production_store.current_snapshot(change.repo_id) != current
+                    or snapshot.get("commit_sha") != merged):
+                raise RuntimeError("production support lost exact merged commit")
             unsupported = self.production_store.unsupported_new_facts(
-                change.repo_id, current, snapshot.get("parent_id"))
+                change.repo_id, current, before)
             if unsupported:
                 raise RuntimeError("production publication lacks canonical support")
             support_count = len(self.production_store.support_receipts_owned_by_paths(
@@ -294,6 +359,7 @@ class GitIntegrationAuthority:
                 "production_current_after": current,
                 "published_canonical_source_git_commit": snapshot["commit_sha"],
                 "indexer_run_id": result.run_id,
+                "clang_support_attempts": clang_support,
                 "canonical_support_receipt_count": support_count,
                 "unsupported_canonical_fact_ids": [],
             })

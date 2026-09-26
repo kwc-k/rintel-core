@@ -78,15 +78,18 @@ def _rows(contract: dict[str, Any], *, incremental: bool = False
     selected: list[dict[str, Any]] = []
     covered: set[str] = set()
     for row in value:
+        directory = Path(str(row["directory"]))
+        if not directory.is_absolute():
+            directory = (path.parent / directory).resolve()
         source = Path(str(row["file"]))
         if not source.is_absolute():
-            source = Path(str(row["directory"])) / source
+            source = directory / source
         try:
             relative = source.resolve().relative_to(root).as_posix()
         except ValueError:
             continue
         if not requested or relative in requested:
-            selected.append(row)
+            selected.append({**row, "directory": str(directory)})
             covered.add(relative)
     if requested:
         missing = {

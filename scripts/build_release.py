@@ -9,16 +9,17 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PREFIX = "rintel-0.1.0"
+PREFIX = "rintel-0.2.0"
 FILES = (
-    ".gitignore", "README.md", "pyproject.toml", "uv.lock", "install.sh", "rintel",
+    ".gitignore", "README.md", "README.zh-CN.md", "ROADMAP.md",
+    "pyproject.toml", "uv.lock", "install.sh", "rintel",
     "uninstall.sh", "scripts/build_release.py", "web/package.json", "web/pnpm-lock.yaml",
     "web/pnpm-workspace.yaml", "web/index.html", "web/tsconfig.json",
     "web/vite.config.ts", "LICENSE", "NOTICE", "CONTRIBUTING.md",
     "SECURITY.md", "SUPPORT.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md",
     "TRADEMARKS.md",
 )
-DIRECTORIES = ("src/rintel", "web/src")
+DIRECTORIES = ("src/rintel", "web/src", "docs/acceptance")
 EXCLUDED_SOURCE_DIRS = {"runtime_trace", "perf_topo"}
 
 

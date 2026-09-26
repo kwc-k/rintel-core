@@ -25,11 +25,14 @@ def exact_compile_row(path: Path, source: Path) -> Mapping[str, Any]:
     for row in value:
         if not isinstance(row, Mapping):
             raise ValueError("compile_commands row must be an object")
+        directory = Path(str(row.get("directory", "")))
+        if not directory.is_absolute():
+            directory = (path.parent / directory).resolve()
         candidate = Path(str(row.get("file", "")))
         if not candidate.is_absolute():
-            candidate = Path(str(row.get("directory", ""))) / candidate
+            candidate = directory / candidate
         if candidate.resolve() == source.resolve():
-            matches.append(row)
+            matches.append({**row, "directory": str(directory)})
     if len(matches) != 1:
         raise ValueError("exact TU requires one and only one compile command")
     return matches[0]

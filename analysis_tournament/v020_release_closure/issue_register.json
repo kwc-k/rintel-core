@@ -1,0 +1,18 @@
+{
+  "issues": [
+    {
+      "id": "V020-001",
+      "severity": "LIMITATION",
+      "status": "OPEN",
+      "description": "Successive direct-call support overlays are revision-bound. If one design has control nets with multiple distinct C source subjects, an earlier subject's copied support does not count for the final revision. The audit labels earlier attempts SUPERSEDED and LVS remains UNKNOWN rather than promoting stale support.",
+      "release_impact": "The bounded single-source direct-call closure passes. General multi-subject batching is future work; this release makes no whole-flow support claim."
+    },
+    {
+      "id": "V020-002",
+      "severity": "TEST_ENVIRONMENT",
+      "status": "CLOSED_BY_ALTERNATE_WITNESS",
+      "description": "A background Cua Chrome session could not verify document-visible polling because the isolated browser lifecycle ended. The repository's real headless Google Chrome E2E separately observed external MCP edits live without reload and verified multiport geometry and type popover.",
+      "release_impact": "None after independent Chrome E2E PASS."
+    }
+  ]
+}

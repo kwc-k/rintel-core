@@ -3137,7 +3137,7 @@ def run() -> None:
             _send({"jsonrpc": "2.0", "id": rid,
                    "result": {"protocolVersion": PROTOCOL_VERSION,
                               "capabilities": {"tools": {}},
-                              "serverInfo": {"name": "rintel-mcp", "version": "0.1.0"},
+                              "serverInfo": {"name": "rintel-mcp", "version": "0.2.0"},
                               # RINTEL-DSH0 §2: the canonical truth contract is
                               # served to every client from instructions.py — the
                               # one place it is written.
