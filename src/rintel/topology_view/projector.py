@@ -369,6 +369,8 @@ def build_lane_bundle(lane_id: str) -> dict:
     for n in topo.get("nodes", []):
         node = dict(n)
         node["repo_path"] = _node_repo_path(spec, n)
+        node["identity_authority"] = "REFERENCE_UNBOUND"
+        node["canonical_id_is_current"] = False
         nodes.append(node)
 
     declared: set[str] = set()
@@ -399,6 +401,8 @@ def build_lane_bundle(lane_id: str) -> dict:
         "lane": lane_id,
         "meta": {
             "label": spec.label,
+            "identity_authority": "REFERENCE_UNBOUND",
+            "identity_note": "Frozen artifact symbol IDs are not bound to CURRENT canonical Store identity",
             "languages": spec.languages,
             "data_capability": spec.data_capability,
             "synthetic": spec.synthetic,

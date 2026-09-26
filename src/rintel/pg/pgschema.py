@@ -62,17 +62,17 @@ DDL_STATEMENTS: list[str] = [
     """
     CREATE TABLE IF NOT EXISTS symbols (
       repo_id            TEXT NOT NULL REFERENCES repositories(id),
-      id                 TEXT NOT NULL,             -- 'node:{kind}:{qname}'
+      id                 TEXT NOT NULL,             -- versioned canonical ID
       kind               TEXT NOT NULL,
       name               TEXT NOT NULL,
       qname              TEXT NOT NULL,
       language           TEXT NOT NULL,
+      identity_schema_version TEXT NOT NULL DEFAULT 'symbol-identity/v1',
       first_snapshot_id  TEXT,
       last_snapshot_id   TEXT,
       created_at         BIGINT NOT NULL,
       updated_at         BIGINT NOT NULL,
-      PRIMARY KEY (repo_id, id),
-      UNIQUE (repo_id, kind, qname)
+      PRIMARY KEY (repo_id, id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(repo_id, kind)",
@@ -90,7 +90,6 @@ DDL_STATEMENTS: list[str] = [
       meta        JSONB NOT NULL DEFAULT '{}',
       search_tsv  tsvector NOT NULL,
       PRIMARY KEY (repo_id, snapshot_id, symbol_id),
-      UNIQUE (repo_id, snapshot_id, kind, qname),
       FOREIGN KEY (repo_id, snapshot_id) REFERENCES snapshots(repo_id, id),
       FOREIGN KEY (repo_id, symbol_id)  REFERENCES symbols(repo_id, id)
     )
@@ -98,6 +97,10 @@ DDL_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_ss_path ON snapshot_symbols(repo_id, snapshot_id, path)",
     "CREATE INDEX IF NOT EXISTS idx_ss_kind ON snapshot_symbols(repo_id, snapshot_id, kind)",
     "CREATE INDEX IF NOT EXISTS idx_ss_qname ON snapshot_symbols(repo_id, snapshot_id, qname)",
+    "CREATE INDEX IF NOT EXISTS idx_ss_legacy_lookup ON snapshot_symbols(repo_id, snapshot_id, kind, qname)",
+    "ALTER TABLE symbols ADD COLUMN IF NOT EXISTS identity_schema_version TEXT NOT NULL DEFAULT 'symbol-identity/v1'",
+    "ALTER TABLE symbols DROP CONSTRAINT IF EXISTS symbols_repo_id_kind_qname_key",
+    "ALTER TABLE snapshot_symbols DROP CONSTRAINT IF EXISTS snapshot_symbols_repo_id_snapshot_id_kind_qname_key",
     "CREATE INDEX IF NOT EXISTS idx_ss_fts   ON snapshot_symbols USING GIN (search_tsv)",
     """
     CREATE TABLE IF NOT EXISTS snapshot_edges (
@@ -615,11 +618,11 @@ DDL_STATEMENTS: list[str] = [
 # extension is available (SPEC-P1 §6.1-4; correctness never depends on them).
 TRGM_INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_ss_trgm_q ON snapshot_symbols"
-    " USING GIN (qname gin_trgm_ops)",
+    " USING GIN (qname public.gin_trgm_ops)",
     "CREATE INDEX IF NOT EXISTS idx_ss_trgm_n ON snapshot_symbols"
-    " USING GIN (name gin_trgm_ops)",
+    " USING GIN (name public.gin_trgm_ops)",
     "CREATE INDEX IF NOT EXISTS idx_ss_trgm_p ON snapshot_symbols"
-    " USING GIN (path gin_trgm_ops)",
+    " USING GIN (path public.gin_trgm_ops)",
 ]
 
 # Drop order (reverse dependency order) for alembic downgrade.

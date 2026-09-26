@@ -69,10 +69,15 @@ def search_symbols(store: Store, params: dict) -> list[dict]:
             if params.get("language") and str(params["language"]).lower() != str(row.get("language") or "").lower():
                 continue
             out.append({"lane": "published", "repo_id": repo["id"],
-                        "snapshot_id": sid, "canonical_id": row["id"],
+                        "snapshot_id": sid, "currentness": "CURRENT",
+                        "canonical_id": row["id"], "qname": row.get("qname"),
                         "name": row["name"], "kind": row["kind"],
-                        "file": row.get("path"), "line": row.get("start_line"),
+                        "file": row.get("path"), "path": row.get("path"),
+                        "scope": {"repo_id": repo["id"], "snapshot_id": sid,
+                                  "currentness": "CURRENT"},
+                        "line": row.get("start_line"),
                         "language": row.get("language"),
+                        "identity_schema_version": row.get("identity_schema_version"),
                         "match": row.get("match", "file")})
             if len(out) >= limit:
                 return out
@@ -84,15 +89,41 @@ def source_uri(repo_id: str, sid: str, path: str, start: int, end: int) -> str:
             f"{quote(sid, safe='')}/{quote(path, safe='')}?start={start}&end={end}")
 
 
+def _exact_node_or_legacy_error(store: Store, repo_id: str, sid: str,
+                                requested: str) -> tuple[dict | None, dict | None]:
+    node = store.node_by_id(repo_id, sid, requested)
+    if node is not None:
+        return node, None
+    aliases = store.nodes_by_legacy_id(repo_id, sid, requested)
+    if len(aliases) > 1:
+        return None, _error(
+            "AMBIGUOUS_LEGACY_ID", "legacy symbol ID maps to multiple current objects",
+            requested=requested, repo_id=repo_id, snapshot_id=sid,
+            candidates=[row["id"] for row in aliases],
+            hint="choose a versioned canonical_id from search_symbols")
+    return None, None
+
+
 def get_symbol(store: Store, canonical_id: str, repo_id: str | None = None) -> dict | None:
     hits = []
     for repo, sid in _scopes(store, repo_id):
         node = store.node_by_id(repo["id"], sid, canonical_id)
         if node is None:
+            legacy_candidates = store.nodes_by_legacy_id(
+                repo["id"], sid, canonical_id)
+            if len(legacy_candidates) > 1:
+                return _error(
+                    "AMBIGUOUS_LEGACY_ID",
+                    "legacy symbol ID maps to multiple current objects",
+                    requested=canonical_id, repo_id=repo["id"],
+                    snapshot_id=sid,
+                    candidates=[row["id"] for row in legacy_candidates],
+                    hint="choose a versioned canonical_id from search_symbols")
             continue
+        resolved_id = node["id"]
         span = {key: node.get(key) for key in
                 ("path", "start_line", "start_col", "end_line", "end_col")}
-        edges = store.edges_for_node(repo["id"], sid, canonical_id)
+        edges = store.edges_for_node(repo["id"], sid, resolved_id)
         start = max(1, int(node.get("start_line") or 1))
         end = min(start + 80, max(start, int(node.get("end_line") or start)))
         uri = (source_uri(repo["id"], sid, node["path"], start, end)
@@ -101,13 +132,14 @@ def get_symbol(store: Store, canonical_id: str, repo_id: str | None = None) -> d
                      "snapshot_id": sid,
                      "identity": {"canonical_id": node["id"], "name": node["name"],
                                   "qname": node["qname"], "kind": node["kind"],
+                                  "identity_schema_version": node.get("identity_schema_version"),
                                   "language": node.get("language"), "file": node.get("path"),
                                   "span": span, "binding": "published canonical node"},
                      "parent": {"file": node.get("path")}, "children": [],
                      "topology_summary": {
-                         "calls_out": sum(e["kind"] == "CALLS" and e["src_id"] == canonical_id
+                         "calls_out": sum(e["kind"] == "CALLS" and e["src_id"] == resolved_id
                                           for e in edges),
-                         "calls_in": sum(e["kind"] == "CALLS" and e["dst_id"] == canonical_id
+                         "calls_in": sum(e["kind"] == "CALLS" and e["dst_id"] == resolved_id
                                          for e in edges)},
                      "flow_memberships": [], "source_uri": uri,
                      "data_interface": {"ports_summary": None,
@@ -130,10 +162,13 @@ def topology(store: Store, params: dict) -> dict:
     if sid is None:
         return _error("REPO_NOT_INDEXED", f"repository '{repo_id}' has no published snapshot")
     root = str(params.get("root") or "")
-    node = store.node_by_id(repo_id, sid, root)
+    node, identity_error = _exact_node_or_legacy_error(store, repo_id, sid, root)
+    if identity_error is not None:
+        return identity_error
     if node is None:
         return _error("SYMBOL_NOT_FOUND", f"symbol '{root}' not in current snapshot",
                       hint="use search_symbols(query=..., repo_id=...) first")
+    resolved_root = node["id"]
     direction = str(params.get("direction") or "both")
     if direction not in {"in", "out", "both"}:
         return _error("INVALID_ENUM", "invalid direction", parameter="direction",
@@ -142,9 +177,12 @@ def topology(store: Store, params: dict) -> dict:
     limit = max(1, min(int(params.get("limit") or 60), 300))
     relations = params.get("relations") or ["CALL"]
     requested = {"CALLS" if r == "CALL" else r for r in relations}
-    graph = store.neighbors(repo_id, sid, root, depth=depth,
+    graph = store.neighbors(repo_id, sid, resolved_root, depth=depth,
                             max_nodes=limit, direction=direction)
     nodes = [{"canonical_id": n["id"], "name": n["name"],
+              "identity_schema_version": n.get("identity_schema_version"),
+              "language": n.get("language"), "kind": n.get("kind"),
+              "currentness": "CURRENT", "snapshot_id": sid,
               "file": n.get("path"), "source_span": {
                   "path": n.get("path"), "start_line": n.get("start_line"),
                   "end_line": n.get("end_line")}} for n in graph["nodes"].values()]
@@ -164,7 +202,9 @@ def topology(store: Store, params: dict) -> dict:
         if len(edges) >= limit:
             break
     return {"summary": f"published snapshot {sid}: {len(nodes)} nodes, {len(edges)} edges",
-            "repo_id": repo_id, "snapshot_id": sid, "evidence_revision": sid, "root": root,
+            "repo_id": repo_id, "snapshot_id": sid, "evidence_revision": sid,
+            "root": resolved_root,
+            "legacy_lookup_input": root if root != resolved_root else None,
             "nodes": nodes, "edges": edges, "unknown_endpoints": 0,
             "capability": {"coverage": "UNKNOWN unless a scoped certificate is supplied"},
             "next": ["explain_evidence", "read_resource"]}
@@ -177,10 +217,19 @@ def find_path(store: Store, params: dict) -> dict:
     sid = store.current_snapshot(repo_id)
     if sid is None:
         return _error("REPO_NOT_INDEXED", f"repository '{repo_id}' has no published snapshot")
-    source, target = str(params["source"]), str(params["target"])
-    if not store.node_by_id(repo_id, sid, source) or not store.node_by_id(repo_id, sid, target):
+    source_input, target_input = str(params["source"]), str(params["target"])
+    source_node, source_error = _exact_node_or_legacy_error(
+        store, repo_id, sid, source_input)
+    target_node, target_error = _exact_node_or_legacy_error(
+        store, repo_id, sid, target_input)
+    if source_error is not None:
+        return source_error
+    if target_error is not None:
+        return target_error
+    if source_node is None or target_node is None:
         return _error("SYMBOL_NOT_FOUND", "source or target is not an exact published node id",
                       hint="discover exact ids with search_symbols")
+    source, target = source_node["id"], target_node["id"]
     kinds = {"CALLS" if kind == "CALL" else kind
              for kind in (params.get("relations") or ["CALL"])}
     max_hops = max(1, min(int(params.get("max_hops") or 6), 8))

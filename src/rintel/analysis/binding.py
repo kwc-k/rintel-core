@@ -96,18 +96,17 @@ def bind_provider_symbol(
     for n in rows:
         if n.get("kind") not in BINDABLE_KINDS:
             continue
-        if n.get("name") != name:
+        if n.get("name") != name or n.get("language") != language:
             continue
         if kind_hint and n.get("kind") != kind_hint:
             continue
         matches.append(n)
     if len(matches) == 1:
         n = matches[0]
-        qname = n.get("qname") or name
-        cid = f"node:{n['kind']}:{qname}"
+        cid = n["id"]
         evidence.append(
             f"exact match: path '{file}' + name '{name}'"
-            f" + kind '{n['kind']}' -> {cid}")
+            f" + language '{language}' + kind '{n['kind']}' -> {cid}")
         return CanonicalSymbolBinding(
             provider, provider_symbol, language, file, snapshot_id,
             BindingStatus.EXACT, canonical_symbol_id=cid,
@@ -120,8 +119,7 @@ def bind_provider_symbol(
         return CanonicalSymbolBinding(
             provider, provider_symbol, language, file, snapshot_id,
             BindingStatus.AMBIGUOUS, binding_evidence=evidence,
-            candidates=[f"node:{n['kind']}:{n.get('qname') or name}"
-                        for n in matches],
+            candidates=[n["id"] for n in matches],
             source_span=source_span)
     evidence.append(f"no node with name '{name}' at path '{file}'")
     return CanonicalSymbolBinding(

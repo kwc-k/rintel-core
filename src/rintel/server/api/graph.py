@@ -14,6 +14,7 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 
 def _node_out(r: dict) -> dict:
     out = {k: r[k] for k in ("id", "kind", "name", "qname", "language",
+                             "identity_schema_version",
                              "path", "start_line", "start_col", "end_line",
                              "end_col") if k in r}
     out["dist"] = r.get("_dist", 0)
@@ -43,12 +44,20 @@ def neighborhood(
     """§7-7: budgeted BFS neighborhood (LOD; no full-graph push)."""
     require_repo(store, repo_id)
     sid = resolve_snapshot(store, repo_id, snapshot)
-    if not store.node_by_id(repo_id, sid, node):
+    resolved = store.node_by_id(repo_id, sid, node)
+    if resolved is None:
+        candidates = store.nodes_by_legacy_id(repo_id, sid, node)
+        if len(candidates) > 1:
+            raise ApiError(409, "ambiguous_legacy_id",
+                           "legacy symbol ID maps to multiple objects",
+                           {"node": node, "snapshot": sid,
+                            "candidates": [row["id"] for row in candidates]})
         raise ApiError(404, "node_not_found",
                        f"symbol '{node}' not found in snapshot",
                        {"node": node, "snapshot": sid})
+    resolved_id = resolved["id"]
     relation = relations.split(",")[0].strip() if relations else None
-    res = store.neighbors(repo_id, sid, node, relation=relation,
+    res = store.neighbors(repo_id, sid, resolved_id, relation=relation,
                           depth=depth, max_nodes=node_budget,
                           direction=direction)
     nodes = [_node_out(n) for n in res["nodes"].values()]

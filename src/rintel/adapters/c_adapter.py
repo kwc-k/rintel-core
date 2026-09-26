@@ -79,14 +79,15 @@ class CAdapter(LanguageAdapter):
         if fd is not None:
             name = self._declarator_name(fd, src)
             if name:
-                qname = name if not self._is_static(node, src) \
+                static = self._is_static(node, src)
+                qname = name if not static \
                     else f"{pf.path}::{name}"
                 s = self.range(node)
                 pf.nodes.append(Node(kind="FUNCTION", name=name, qname=qname,
                                      language=self.language, path=pf.path,
                                      start_line=s[0], start_col=s[1],
                                      end_line=s[2], end_col=s[3],
-                                     meta={"defined": False}))
+                                     meta={"defined": False, "static": static}))
             return
         # plain struct/union/enum declarations
         for c in node.named_children:
@@ -160,7 +161,9 @@ class CAdapter(LanguageAdapter):
                              language=self.language, path=pf.path,
                              start_line=s[0], start_col=s[1],
                              end_line=s[2], end_col=s[3],
-                             meta={"defined": defined, "static": static}))
+                             meta={"defined": defined, "static": static,
+                                   "definition_source_scoped": bool(
+                                       defined and name == "main")}))
         if defined:
             self._scan_calls(node, pf, src)
 

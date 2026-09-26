@@ -56,7 +56,8 @@ def _srow(r):
 # canonical (SQLite-shaped) node row: snapshot_symbols JOIN symbols (language)
 _NODE_SEL = (
     "SELECT ss.repo_id, ss.snapshot_id, ss.symbol_id AS id, ss.kind, ss.name,"
-    " ss.qname, s.language AS language, ss.path, ss.start_line, ss.start_col,"
+    " ss.qname, s.language AS language, s.identity_schema_version,"
+    " ss.path, ss.start_line, ss.start_col,"
     " ss.end_line, ss.end_col, ss.meta::text AS meta_json"
     " FROM snapshot_symbols ss JOIN symbols s"
     "   ON s.repo_id = ss.repo_id AND s.id = ss.symbol_id"
@@ -223,16 +224,32 @@ class PgStore:
     # ------------------------------------------------------------------
     def upsert_node(self, node: Node, repo_id: str,
                     snapshot_id: str) -> tuple[str, bool]:
-        """Merge by (kind, qname) — same canonical identity (P0 semantics)."""
+        """Merge only an exact versioned identity, not a same-spelled name."""
+        nid = node.canonical_id
         row = self.conn.execute(
-            "SELECT symbol_id, path, meta FROM snapshot_symbols WHERE repo_id=%s AND"
-            " snapshot_id=%s AND kind=%s AND qname=%s",
-            (repo_id, snapshot_id, node.kind, node.qname)).fetchone()
+            "SELECT ss.symbol_id, ss.path, ss.meta, ss.kind, ss.qname,"
+            " s.language FROM snapshot_symbols ss"
+            " JOIN symbols s ON s.repo_id=ss.repo_id AND s.id=ss.symbol_id"
+            " WHERE ss.repo_id=%s AND ss.snapshot_id=%s AND ss.symbol_id=%s",
+            (repo_id, snapshot_id, nid)).fetchone()
         loc = {"path": node.path, "start_line": node.start_line,
                "start_col": node.start_col, "end_line": node.end_line,
                "end_col": node.end_col}
         if row:
+            if (row["language"] != node.language or row["kind"] != node.kind
+                    or row["qname"] != node.qname):
+                raise ValueError(
+                    "IDENTITY_COLLISION: same canonical ID has different descriptor")
             meta = row["meta"] or {}
+            was_defined = meta.get("defined") is True
+            is_definition = node.meta.get("defined") is True
+            if (row["path"] != node.path and was_defined
+                    and is_definition
+                    and node.kind in ("FUNCTION", "METHOD", "SUBROUTINE")):
+                raise ValueError(
+                    "IDENTITY_COLLISION: multiple definitions of "
+                    f"{node.language}:{node.kind}:{node.qname} at "
+                    f"{row['path']} and {node.path}")
             locs = meta.get("locations", [])
             if row["path"] == node.path:
                 locs = [old for old in locs if old.get("path") != node.path]
@@ -240,7 +257,9 @@ class PgStore:
                 locs.append(loc)
             meta["locations"] = locs
             merged = {**node.meta, **meta}
-            if row["path"] == node.path:
+            if "defined" in merged:
+                merged["defined"] = was_defined or is_definition
+            if is_definition or (row["path"] == node.path and not was_defined):
                 self.conn.execute(
                     "UPDATE snapshot_symbols SET name=%s, path=%s,"
                     " start_line=%s, start_col=%s, end_line=%s, end_col=%s,"
@@ -257,18 +276,18 @@ class PgStore:
                     " snapshot_id=%s AND symbol_id=%s",
                     (Jsonb(merged), repo_id, snapshot_id, row["symbol_id"]))
             return row["symbol_id"], False
-        nid = node.canonical_id
         meta = dict(node.meta)
         meta.setdefault("locations", []).append(loc)
         now = self.now()
         self.conn.execute(
             "INSERT INTO symbols(repo_id, id, kind, name, qname, language,"
-            " first_snapshot_id, last_snapshot_id, created_at, updated_at)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            " identity_schema_version, first_snapshot_id, last_snapshot_id,"
+            " created_at, updated_at)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
             " ON CONFLICT (repo_id, id) DO UPDATE SET last_snapshot_id="
             "excluded.last_snapshot_id, updated_at=excluded.updated_at",
             (repo_id, nid, node.kind, node.name, node.qname, node.language,
-             snapshot_id, snapshot_id, now, now))
+             node.identity_schema_version, snapshot_id, snapshot_id, now, now))
         self.conn.execute(
             "INSERT INTO snapshot_symbols(repo_id, snapshot_id, symbol_id,"
             " kind, name, qname, path, start_line, start_col, end_line,"
@@ -281,17 +300,32 @@ class PgStore:
 
     def node_by_qname(self, repo_id: str, snapshot_id: str,
                       qname: str) -> Optional[dict]:
-        r = self.conn.execute(
+        rows = self.conn.execute(
             _NODE_SEL + " WHERE ss.repo_id=%s AND ss.snapshot_id=%s AND"
-            " ss.qname=%s", (repo_id, snapshot_id, qname)).fetchone()
-        return dict(r) if r else None
+            " ss.qname=%s LIMIT 2", (repo_id, snapshot_id, qname)).fetchall()
+        return dict(rows[0]) if len(rows) == 1 else None
 
     def node_by_id(self, repo_id: str, snapshot_id: str,
                    nid: str) -> Optional[dict]:
         r = self.conn.execute(
             _NODE_SEL + " WHERE ss.repo_id=%s AND ss.snapshot_id=%s AND"
             " ss.symbol_id=%s", (repo_id, snapshot_id, nid)).fetchone()
-        return dict(r) if r else None
+        if r:
+            return dict(r)
+        rows = self.nodes_by_legacy_id(repo_id, snapshot_id, nid)
+        return rows[0] if len(rows) == 1 else None
+
+    def nodes_by_legacy_id(self, repo_id: str, snapshot_id: str,
+                           legacy_id: str) -> list[dict]:
+        if not legacy_id.startswith("node:") or ":v2:" in legacy_id:
+            return []
+        kind, sep, qname = legacy_id.removeprefix("node:").partition(":")
+        if not sep or not qname:
+            return []
+        return [dict(row) for row in self.conn.execute(
+            _NODE_SEL + " WHERE ss.repo_id=%s AND ss.snapshot_id=%s"
+            " AND ss.kind=%s AND ss.qname=%s LIMIT 200",
+            (repo_id, snapshot_id, kind, qname)).fetchall()]
 
     def all_nodes(self, repo_id: str, snapshot_id: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
@@ -995,46 +1029,49 @@ class PgStore:
         the end lets the latest snapshot shadow historical rows.
         """
         q = query.strip()
+        def distinct(rows: list[dict]) -> list[dict]:
+            seen: set[str] = set()
+            result: list[dict] = []
+            for row in rows:
+                if row["id"] not in seen:
+                    seen.add(row["id"])
+                    result.append(row)
+            return result[:limit]
         out: list[dict] = []
         scope = " AND ss.snapshot_id=%s" if snapshot_id else ""
         sargs = () if snapshot_id is None else (snapshot_id,)
         for col in ("qname", "name", "path"):
             rows = self.conn.execute(
                 _NODE_SEL + f" WHERE ss.repo_id=%s{scope} AND ss.{col}=%s"
-                " LIMIT %s", (repo_id, *sargs, q, limit)).fetchall()
+                " ORDER BY ss.symbol_id LIMIT %s", (repo_id, *sargs, q, limit)).fetchall()
             for r in rows:
                 d = dict(r)
                 d["match"] = f"exact:{col}"
                 out.append(d)
-        if len(out) >= limit:
-            return out[:limit]
+        if len(distinct(out)) >= limit:
+            return distinct(out)
         rows = self.conn.execute(
             _NODE_SEL + f" WHERE ss.repo_id=%s{scope} AND ss.search_tsv @@"
             " plainto_tsquery('simple', %s) ORDER BY ts_rank(ss.search_tsv,"
             " plainto_tsquery('simple', %s)) DESC LIMIT %s",
-            (repo_id, *sargs, q, q, limit - len(out))).fetchall()
+            (repo_id, *sargs, q, q, limit - len(distinct(out)))).fetchall()
         for r in rows:
             d = dict(r)
             d["match"] = "fts"
             out.append(d)
-        if len(out) >= limit:
-            return out[:limit]
+        if len(distinct(out)) >= limit:
+            return distinct(out)
         like = f"%{q}%"
         rows = self.conn.execute(
             _NODE_SEL + f" WHERE ss.repo_id=%s{scope} AND (ss.qname ILIKE %s"
             " OR ss.name ILIKE %s OR ss.path ILIKE %s) LIMIT %s",
-            (repo_id, *sargs, like, like, like, limit - len(out))).fetchall()
+            (repo_id, *sargs, like, like, like,
+             limit - len(distinct(out)))).fetchall()
         for r in rows:
             d = dict(r)
             d["match"] = "trigram"
             out.append(d)
-        seen: set[str] = set()
-        dedup: list[dict] = []
-        for d in out:
-            if d["id"] not in seen:
-                seen.add(d["id"])
-                dedup.append(d)
-        return dedup[:limit]
+        return distinct(out)
 
     def neighbors(self, repo_id: str, snapshot_id: str, nid: str,
                   relation: str | None = None, depth: int = 1,

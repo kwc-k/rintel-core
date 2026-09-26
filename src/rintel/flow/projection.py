@@ -60,7 +60,7 @@ class FlowProjectionService:
                     workspace_id: str | None = None,
                     architecture_model_id: str | None = None,
                     include_callees: bool = True) -> dict:
-        """`symbol` is a canonical node id (`node:KIND:qname`) or a bare qname.
+        """`symbol` is a v2 canonical node id, legacy alias, or bare qname.
         Blocks: the symbol + its direct CALLS callees (depth 1, §5).
         """
         self._require_design_lifecycle()
@@ -183,6 +183,15 @@ class FlowProjectionService:
         row = None
         if symbol.startswith("node:"):
             row = self.db.node_by_id(repo_id, snapshot_id, symbol)
+            if row is None:
+                candidates = self.db.nodes_by_legacy_id(
+                    repo_id, snapshot_id, symbol)
+                if len(candidates) > 1:
+                    raise FlowError(
+                        "ambiguous_legacy_id",
+                        "legacy symbol ID maps to multiple objects",
+                        {"symbol": symbol, "snapshot_id": snapshot_id,
+                         "candidates": [candidate["id"] for candidate in candidates]})
         if row is None:
             row = self.db.node_by_qname(repo_id, snapshot_id, symbol)
         if not row:

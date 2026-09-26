@@ -32,7 +32,7 @@ from .store import ArchError, FlowError
 from .evidence_authority.support import CanonicalSupportReceipt, _reuse_receipt
 
 RESOLUTION_EDGE_KINDS = ("CALLS", "IMPORTS", "INCLUDES", "REFERENCES")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -70,6 +70,12 @@ class Database:
                 self.conn.execute(
                     "ALTER TABLE snapshots ADD COLUMN publication_status TEXT "
                     "NOT NULL DEFAULT 'published'")
+            node_columns = {r["name"] for r in self.conn.execute(
+                "PRAGMA table_info(nodes)").fetchall()}
+            if "identity_schema_version" not in node_columns:
+                self.conn.execute(
+                    "ALTER TABLE nodes ADD COLUMN identity_schema_version TEXT "
+                    "NOT NULL DEFAULT 'symbol-identity/v1'")
             self._apply_ddl(ARCH_DDL)
             self._apply_ddl(FLOW_DDL)
             self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -197,18 +203,30 @@ class Database:
     # -- nodes ----------------------------------------------------------
     def upsert_node(self, node: Node, repo_id: str,
                     snapshot_id: str) -> tuple[str, bool]:
-        """Insert a definition node.  Same (kind, qname) merges into one
-        canonical node (cross-file identity, e.g. C decl+def); locations are
-        unioned in meta.locations.  Returns (node_id, created)."""
+        """Merge an exact v2 identity, never a merely same-spelled symbol."""
+        nid = node.canonical_id
         row = self.conn.execute(
-            "SELECT id, path, meta_json FROM nodes WHERE repo_id=? AND snapshot_id=?"
-            " AND kind=? AND qname=?",
-            (repo_id, snapshot_id, node.kind, node.qname)).fetchone()
+            "SELECT id, path, language, kind, qname, meta_json FROM nodes "
+            "WHERE repo_id=? AND snapshot_id=? AND id=?",
+            (repo_id, snapshot_id, nid)).fetchone()
         loc = {"path": node.path, "start_line": node.start_line,
                "start_col": node.start_col, "end_line": node.end_line,
                "end_col": node.end_col}
         if row:
+            if (row["language"] != node.language or row["kind"] != node.kind
+                    or row["qname"] != node.qname):
+                raise ValueError(
+                    "IDENTITY_COLLISION: same canonical ID has different descriptor")
             meta = json.loads(row["meta_json"])
+            was_defined = meta.get("defined") is True
+            is_definition = node.meta.get("defined") is True
+            if (row["path"] != node.path and was_defined
+                    and is_definition
+                    and node.kind in ("FUNCTION", "METHOD", "SUBROUTINE")):
+                raise ValueError(
+                    "IDENTITY_COLLISION: multiple definitions of "
+                    f"{node.language}:{node.kind}:{node.qname} at "
+                    f"{row['path']} and {node.path}")
             locs = meta.get("locations", [])
             if row["path"] == node.path:
                 locs = [old for old in locs if old.get("path") != node.path]
@@ -216,7 +234,9 @@ class Database:
                 locs.append(loc)
             meta["locations"] = locs
             meta = {**node.meta, **meta}
-            if row["path"] == node.path:
+            if "defined" in meta:
+                meta["defined"] = was_defined or is_definition
+            if is_definition or (row["path"] == node.path and not was_defined):
                 self.conn.execute(
                     "UPDATE nodes SET name=?, language=?, path=?, start_line=?,"
                     " start_col=?, end_line=?, end_col=?, meta_json=? WHERE"
@@ -230,37 +250,48 @@ class Database:
                     " snapshot_id=? AND id=?",
                     (json.dumps(meta), repo_id, snapshot_id, row["id"]))
             return row["id"], False
-        nid = node.canonical_id
-        k = 2
-        while self.conn.execute(
-                "SELECT 1 FROM nodes WHERE repo_id=? AND snapshot_id=? AND id=?",
-                (repo_id, snapshot_id, nid)).fetchone():
-            nid = f"{node.canonical_id}#{k}"
-            k += 1
         meta = dict(node.meta)
         meta.setdefault("locations", []).append(loc)
         self.conn.execute(
             "INSERT INTO nodes(id, repo_id, snapshot_id, kind, name, qname,"
-            " language, path, start_line, start_col, end_line, end_col,"
-            " meta_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " language, identity_schema_version, path, start_line, start_col,"
+            " end_line, end_col, meta_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (nid, repo_id, snapshot_id, node.kind, node.name, node.qname,
-             node.language, node.path, node.start_line, node.start_col,
+             node.language, node.identity_schema_version, node.path,
+             node.start_line, node.start_col,
              node.end_line, node.end_col, json.dumps(meta)))
         return nid, True
 
     def node_by_qname(self, repo_id: str, snapshot_id: str,
                       qname: str) -> Optional[dict]:
-        r = self.conn.execute(
+        rows = self.conn.execute(
             "SELECT * FROM nodes WHERE repo_id=? AND snapshot_id=? AND qname=?",
-            (repo_id, snapshot_id, qname)).fetchone()
-        return dict(r) if r else None
+            (repo_id, snapshot_id, qname)).fetchmany(2)
+        return dict(rows[0]) if len(rows) == 1 else None
 
     def node_by_id(self, repo_id: str, snapshot_id: str,
                    nid: str) -> Optional[dict]:
         r = self.conn.execute(
             "SELECT * FROM nodes WHERE repo_id=? AND snapshot_id=? AND id=?",
             (repo_id, snapshot_id, nid)).fetchone()
-        return dict(r) if r else None
+        if r:
+            return dict(r)
+        # Legacy IDs are aliases only if unique in this exact snapshot.  Old
+        # snapshots retain their original IDs and evidence without rewriting.
+        rows = self.nodes_by_legacy_id(repo_id, snapshot_id, nid)
+        return rows[0] if len(rows) == 1 else None
+
+    def nodes_by_legacy_id(self, repo_id: str, snapshot_id: str,
+                           legacy_id: str) -> list[dict]:
+        if not legacy_id.startswith("node:") or ":v2:" in legacy_id:
+            return []
+        kind, sep, qname = legacy_id.removeprefix("node:").partition(":")
+        if not sep or not qname:
+            return []
+        return [dict(row) for row in self.conn.execute(
+            "SELECT * FROM nodes WHERE repo_id=? AND snapshot_id=? "
+            "AND kind=? AND qname=? LIMIT 200",
+            (repo_id, snapshot_id, kind, qname)).fetchall()]
 
     def all_nodes(self, repo_id: str, snapshot_id: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
@@ -914,27 +945,35 @@ class Database:
         latest snapshot's rows shadow older ones after dedup.
         """
         q = query.strip()
+        def distinct(rows: list[dict]) -> list[dict]:
+            seen: set[str] = set()
+            result: list[dict] = []
+            for row in rows:
+                if row["id"] not in seen:
+                    seen.add(row["id"])
+                    result.append(row)
+            return result[:limit]
         scope = " AND snapshot_id=?" if snapshot_id else ""
         args: tuple = () if not snapshot_id else (snapshot_id,)
         out: list[dict] = []
         for col in ("qname", "name", "path"):
             rows = self.conn.execute(
                 f"SELECT * FROM nodes WHERE repo_id=?{scope} AND {col}=?"
-                " LIMIT ?",
+                " ORDER BY id LIMIT ?",
                 (repo_id, *args, q, limit)).fetchall()
             for r in rows:
                 d = dict(r)
                 d["match"] = f"exact:{col}"
                 out.append(d)
-        if len(out) >= limit:
-            return out[:limit]
+        if len(distinct(out)) >= limit:
+            return distinct(out)
         try:
             fts_q = '"' + q.replace('"', '""') + '"'
             rows = self.conn.execute(
                 "SELECT n.* FROM nodes n JOIN nodes_fts f ON f.rowid=n.rowid"
                 f" WHERE n.repo_id=?{scope} AND nodes_fts MATCH ?"
                 " ORDER BY rank LIMIT ?",
-                (repo_id, *args, fts_q, limit - len(out))).fetchall()
+                (repo_id, *args, fts_q, limit - len(distinct(out)))).fetchall()
             for r in rows:
                 d = dict(r)
                 d["match"] = "fts"
@@ -944,18 +983,12 @@ class Database:
                 f"SELECT * FROM nodes WHERE repo_id=?{scope} AND (name LIKE ?"
                 " OR qname LIKE ? OR path LIKE ?) LIMIT ?",
                 (repo_id, *args, f"%{q}%", f"%{q}%", f"%{q}%",
-                 limit - len(out)))
+                 limit - len(distinct(out))))
             for r in rows:
                 d = dict(r)
                 d["match"] = "like"
                 out.append(d)
-        seen = set()
-        dedup = []
-        for d in out:
-            if d["id"] not in seen:
-                seen.add(d["id"])
-                dedup.append(d)
-        return dedup[:limit]
+        return distinct(out)
 
     # -- projections / stats --------------------------------------------
     def neighbors(self, repo_id: str, snapshot_id: str, nid: str,

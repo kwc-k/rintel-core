@@ -70,7 +70,8 @@ class FortranAdapter(LanguageAdapter):
         pf.nodes.append(Node(kind=kind, name=name, qname=qname,
                              language="fortran", path=pf.path,
                              start_line=s[0], start_col=s[1],
-                             end_line=s[2], end_col=s[3]))
+                             end_line=s[2], end_col=s[3],
+                             meta={"definition_source_scoped": True}))
         unit_ref = Ref(REF_QNAME, qname)
         if parent_ref is not None:
             pf.edges.append(EdgeSpec(kind="CONTAINS", src=parent_ref,
@@ -95,7 +96,8 @@ class FortranAdapter(LanguageAdapter):
                              language="fortran", path=pf.path,
                              start_line=s[0], start_col=s[1],
                              end_line=s[2], end_col=s[3],
-                             meta={"parent_module": parent_mod}))
+                             meta={"parent_module": parent_mod,
+                                   "definition_source_scoped": True}))
         if parent_mod:
             pf.edges.append(EdgeSpec(kind="CONTAINS",
                                      src=Ref(REF_QNAME, parent_mod),
@@ -269,7 +271,9 @@ class FortranAdapter(LanguageAdapter):
         kind = "SUBROUTINE" if node.type == "subroutine" else "FUNCTION"
         qname = f"{parent_qname}.{name}" if parent_qname else name
         s = self.range(node)
-        meta: dict = {"defined": defined}
+        meta: dict = {"defined": defined,
+                      "definition_source_scoped": bool(defined and
+                                                       parent_qname is None)}
         bind_name: str | None = None
         if stmt:
             lb = self.child_by_type(stmt, "language_binding")
