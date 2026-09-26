@@ -86,7 +86,11 @@ Working style:
     are kind-prefixed (CALL:SRC->TGT); explain_evidence(edge_id=...) accepts them, and a
     non-direct edge recovers via its witness_fact_ids (call explain_evidence(fact_id=...)).
 5b. For cross-library call chains (command → faclib → BLAS/LAPACK): get_symbol / query_topology responses carry kernel_universe + kernel_calls (faclib coverage universe: definition files, lines, macro-linkage evidence e.g. cfortran DGESV→dgesv; kernel_calls lists an engine symbol's resolved callees with file:line — follow it step by step for inter-library chains). Resolution is EXACT/CANDIDATE_SET/UNKNOWN only — never invent a target; report UNKNOWN when evidence is insufficient (function-pointer registry targets: the string command name is NOT the function target).
-6. For designs: create_design → design_patch(mode='preview') → design_patch(mode='apply') → validate_design. Never touch canonical evidence.
+6. For designs: create_design returns a DesignRevision ID; preview is read-only.
+   design_patch(mode='apply') requires expected_design_revision. For EDA Flow
+   edits use mutate_flow_design with change_id, stable_id and that exact revision;
+   Lx.Ny addresses are display-only. Refresh the revision after each mutation,
+   then validate_design. Never touch canonical evidence.
 
 Tool exposure (RINTEL-DSH0):
 - This deployment may expose only a SUBSET of the tools listed above (a read/analyse

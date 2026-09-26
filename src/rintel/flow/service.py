@@ -14,6 +14,7 @@ import re
 from typing import Iterable, Optional
 
 from ..store import FlowError, Store
+from .eda_address import flow_design_digest, project_eda
 from .domain import (BLOCK_KINDS, BLOCK_STATES, NET_KINDS, PORT_DIRECTIONS,
                      SEMANTIC_KINDS)
 
@@ -83,6 +84,16 @@ class FlowService:
         ports = self.db.flow_ports(flow_id)
         nets = self.db.flow_nets(flow_id)
         bindings = self.db.flow_bindings(flow_id)
+        eda = project_eda(flow, blocks, ports, nets,
+                          flow_design_digest(self.db, flow_id))
+        node_views = {row["id"]: row for row in eda["nodes"]}
+        port_views = {row["id"]: row for row in eda["ports"]}
+        net_views = {row["id"]: row for row in eda["nets"]}
+        ports = [{**p, "display_address": port_views[p["id"]]["display_address"],
+                  "eda_address": port_views[p["id"]]["eda_address"],
+                  "port_contract": port_views[p["id"]]["port_contract"],
+                  "expected_actual": port_views[p["id"]]["expected_actual"]}
+                 for p in ports]
         port_block = {p["id"]: p["block_id"] for p in ports}
         block_port_list: dict[str, list[dict]] = {}
         for p in ports:
@@ -114,6 +125,8 @@ class FlowService:
         block_rows = []
         for b in blocks:
             row = dict(b)
+            row["display_address"] = node_views[b["id"]]["display_address"]
+            row["eda_address"] = node_views[b["id"]]["eda_address"]
             row["binding"] = binding_by_block.get(b["id"])
             sym = symbol_by_block.get(b["id"])
             row["symbol"] = sym
@@ -129,6 +142,8 @@ class FlowService:
         net_rows = []
         for n in nets:
             row = dict(n)
+            row["display_address"] = net_views[n["id"]]["display_address"]
+            row["eda_address"] = net_views[n["id"]]["eda_address"]
             row["source_block_id"] = port_block.get(n["source_port_id"])
             row["target_block_id"] = port_block.get(n["target_port_id"])
             try:
@@ -146,9 +161,44 @@ class FlowService:
             "nets": net_rows,
             "bindings": bindings,
             "layout": (layout or {}).get("layout", {}),
+            "eda": eda,
+            "design_activity": self._design_activity(flow, eda["revision"]),
             "repo": {"id": repo["id"], "root_path": repo["root_path"]}
             if repo else None,
         }
+
+    def _design_activity(self, flow: dict, revision: str) -> dict:
+        """Receipt-backed last operation, never an in-flight or ACTUAL claim."""
+        from ..design_lifecycle.service import DesignLifecycleService
+
+        lifecycle = DesignLifecycleService(self.db)
+        bound = [change for change in lifecycle.list_changes(repo_id=flow["repo_id"])
+                 if (ref := change.design_revision.flow_model_ref) is not None
+                 and ref.identity == flow["id"] and ref.revision == revision]
+        if len(bound) != 1:
+            return {"status": "UNKNOWN" if not bound else "AMBIGUOUS",
+                    "reason": "no_exact_bound_change" if not bound
+                    else "multiple_exact_bound_changes"}
+        change = bound[0]
+        rows = [receipt for receipt in lifecycle.receipts(change.id)
+                if receipt.command == "flow_mutation"]
+        if not rows:
+            return {"status": "UNKNOWN", "reason": "no_flow_mutation_receipt"}
+        receipt = rows[-1]
+        return {"status": "RECORDED", "meaning": "last_completed_operation",
+                "change_id": change.id,
+                "design_revision": change.design_revision.id,
+                "receipt_id": receipt.id, "sequence": receipt.sequence,
+                "actor": receipt.actor,
+                "operation": receipt.payload.get("operation") or "UNKNOWN",
+                "authority": "DESIGN_ANNOTATION"}
+
+    def get_eda(self, flow_id: str) -> dict:
+        """Compact shared Harness/UI projection without source-code enrichment."""
+        flow = self.require_flow(flow_id)
+        return project_eda(flow, self.db.flow_blocks(flow_id),
+                           self.db.flow_ports(flow_id), self.db.flow_nets(flow_id),
+                           flow_design_digest(self.db, flow_id))
 
     def create_flow(self, repo_id: str, name: str, snapshot_id: str, *,
                     workspace_id: str | None = None,
@@ -280,7 +330,7 @@ class FlowService:
     def add_port(self, flow_id: str, *, block_id: str, name: str,
                  direction: str, semantic_kind: str,
                  code_type: str | None = None,
-                 position_order: int = 0,
+                 position_order: int | None = None,
                  meta: dict | None = None) -> dict:
         self._require_design_lifecycle()
         self.require_flow(flow_id)

@@ -224,16 +224,50 @@ def compare_calls(design: LvsDesign, code: LvsCodeSide) -> list:
                 if e.get("target") == b and e.get("kind") == "CALL"]
         if hits:
             best = hits[0]
-            if (best.get("truth_class") in HARD and
+            if (best.get("static_presence") == "PRESENT" and
+                    best.get("static_presence_support_dimensions")):
+                direct_support = best["static_presence_support_dimensions"][0]
+                diffs.append(LvsDiff(
+                    kind="call", status=LvsStatus.MATCH,
+                    design_object=f"call:{a}->{b}",
+                    code_object=f"call:{a}->{b}",
+                    message=f"Designed static CALL {a} → {b} exists in code.",
+                    why="An exact-bound admitted Clang direct-call receipt "
+                        "proves static presence only; execution modality "
+                        "and runtime observation remain separate.",
+                    truth_class=direct_support.get("truth_class", "UNKNOWN"),
+                    coverage=direct_support.get("coverage", "UNKNOWN"),
+                    code_witness={
+                        "static_presence": "PRESENT",
+                        "rule_version": best.get("static_presence_rule_version"),
+                        "support_receipt_ids": best.get(
+                            "static_presence_support_receipt_ids", []),
+                        "support_dimensions": best.get(
+                            "static_presence_support_dimensions", []),
+                        "evidence_authority": best.get(
+                            "static_presence_evidence_authority", "UNKNOWN"),
+                        "provider_status": best.get(
+                            "static_presence_provider_status", "UNKNOWN"),
+                        "target_resolution": direct_support.get(
+                            "target_resolution", "UNKNOWN"),
+                        "execution_modality": direct_support.get(
+                            "execution_modality", "UNKNOWN"),
+                        "coverage": direct_support.get("coverage", "UNKNOWN"),
+                        "runtime_state": best.get("runtime_state", "UNMEASURED"),
+                        "runtime_evidence_used": False,
+                    },
+                    source_location=best.get("source_span")))
+            elif (best.get("truth_class") in HARD and
                     best.get("coverage") == "COMPLETE" and
-                    best.get("target_resolution") != "UNKNOWN"):
+                    best.get("target_resolution") == "EXACT" and
+                    best.get("execution_modality") == "MUST"):
                 diffs.append(LvsDiff(
                     kind="call", status=LvsStatus.MATCH,
                     design_object=f"call:{a}->{b}",
                     code_object=f"call:{a}->{b}",
                     message=f"Designed CALL {a} → {b} exists in code.",
-                    why="Deterministic CALL with COMPLETE coverage and "
-                        "resolved target (L2).",
+                    why="Strong admitted CALL evidence has COMPLETE "
+                        "coverage, MUST modality, and an EXACT target (L2).",
                     truth_class=best.get("truth_class"),
                     coverage=best.get("coverage"),
                     code_witness=best.get("representative_witnesses",
@@ -250,8 +284,9 @@ def compare_calls(design: LvsDesign, code: LvsCodeSide) -> list:
                             f"with {mod}/partial evidence "
                             "(target_resolution="
                             f"{best.get('target_resolution')}).",
-                    why="Design asserts a deterministic CALL; code evidence "
-                        "is may-flow/partial — not a contradiction (§8).",
+                    why="The design net expects static CALL presence, but "
+                        "this evidence lacks a scoped exact positive proof; "
+                        "MAY/partial is not a contradiction (§8).",
                     truth_class=best.get("truth_class"),
                     coverage=best.get("coverage")))
             continue

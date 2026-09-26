@@ -5,6 +5,7 @@
 // provenance persisted on the design model via the API.
 import { defineStore } from 'pinia'
 import * as flowApi from '../api/flow'
+import type { FlowMutationGuard } from '../api/design-lifecycle'
 import { isApiError } from '../api/client'
 import type {
   DesignTransaction, FlowBlock, FlowDto, FlowLayoutPos, FlowNet,
@@ -144,12 +145,25 @@ export const useFlowStore = defineStore('flow', {
   },
 
   actions: {
+    mutationGuard(): FlowMutationGuard {
+      return { flowId: this.flowId, revision: this.dto?.eda?.revision ?? '', commits: 0 }
+    },
+
     async loadFlow(flowId: string): Promise<void> {
+      const previousRevision = this.flowId === flowId ? this.dto?.eda?.revision : undefined
+      if (this.flowId !== flowId) {
+        this.undoStack = []
+        this.redoStack = []
+      }
       this.flowId = flowId
       this.loading = true
       this.error = ''
       try {
         this.dto = await flowApi.getFlow(flowId)
+        if (previousRevision && this.dto.eda?.revision !== previousRevision) {
+          this.undoStack = []
+          this.redoStack = []
+        }
         this.positions = { ...(this.dto.layout ?? {}) }
       } catch (err) {
         this.error = isApiError(err) ? err.message : String(err)
@@ -170,6 +184,8 @@ export const useFlowStore = defineStore('flow', {
       this.flowId = dto.flow.id
       this.positions = { ...(dto.layout ?? {}) }
       this.currentParentBlockId = ''
+      this.undoStack = []
+      this.redoStack = []
       return dto.flow.id
     },
 
@@ -197,6 +213,8 @@ export const useFlowStore = defineStore('flow', {
       const dto = await flowApi.fromComponent(input)
       this.dto = dto
       this.flowId = dto.flow.id
+      this.undoStack = []
+      this.redoStack = []
       return dto.flow.id
     },
 
@@ -205,6 +223,35 @@ export const useFlowStore = defineStore('flow', {
       const dto = await flowApi.getFlow(this.flowId)
       this.dto = dto
       this.positions = { ...(dto.layout ?? {}) }
+    },
+
+    /** Observe external harness edits without replacing an in-progress canvas draft. */
+    async refreshIfRevisionChanged(): Promise<boolean> {
+      const flowId = this.flowId
+      if (!flowId || !this.dto) return false
+      const observedRevision = this.dto.eda?.revision
+      const dto = await flowApi.getFlow(flowId)
+      if (this.flowId !== flowId || this.dto?.eda?.revision !== observedRevision ||
+          dto.eda?.revision === observedRevision) return false
+      this.dto = dto
+      this.positions = { ...(dto.layout ?? {}) }
+      // Local history was recorded against the previous DesignRevision.
+      this.undoStack = []
+      this.redoStack = []
+      if (this.selectedBlockId && !dto.blocks.some((b) => b.id === this.selectedBlockId)) {
+        this.selectedBlockId = ''
+        this.selectedPortId = ''
+      }
+      if (this.selectedPortId && !dto.ports.some((p) => p.id === this.selectedPortId)) {
+        this.selectedPortId = ''
+      }
+      if (this.selectedNetId && !dto.nets.some((n) => n.id === this.selectedNetId)) {
+        this.selectedNetId = ''
+      }
+      if (this.currentParentBlockId && !dto.blocks.some((b) => b.id === this.currentParentBlockId)) {
+        this.currentParentBlockId = ''
+      }
+      return true
     },
 
     selectBlock(id: string): void {
@@ -245,13 +292,14 @@ export const useFlowStore = defineStore('flow', {
       const state: FlowBlockState = kind === 'function' || kind === 'object'
         ? 'proposed' : 'existing'
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
         const b = await flowApi.createBlock(this.flowId, {
           kind, name, state,
           parentBlockId: this.currentParentBlockId || null,
-        })
+        }, guard)
         await this.refresh()
-        this.recordTransaction(`add ${b.name}`, before)
+        this.recordTransaction(`add ${b.name}`, before, guard)
         this.selectBlock(b.id)
         return b
       } catch (err) {
@@ -264,10 +312,11 @@ export const useFlowStore = defineStore('flow', {
       name?: string; code?: string; state?: string; meta?: Record<string, unknown> | null
     }): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        await flowApi.patchBlock(this.flowId, blockId, body)
+        await flowApi.patchBlock(this.flowId, blockId, body, guard)
         await this.refresh()
-        this.recordTransaction('update block', before)
+        this.recordTransaction('update block', before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
       }
@@ -275,10 +324,11 @@ export const useFlowStore = defineStore('flow', {
 
     async deleteBlocks(ids: string[]): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        for (const id of ids) await flowApi.deleteBlock(this.flowId, id)
+        for (const id of ids) await flowApi.deleteBlock(this.flowId, id, guard)
         await this.refresh()
-        this.recordTransaction(`delete ${ids.length} block(s)`, before)
+        this.recordTransaction(`delete ${ids.length} block(s)`, before, guard)
         this.clearSelection()
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
@@ -287,13 +337,14 @@ export const useFlowStore = defineStore('flow', {
 
     async reparentBlock(blockId: string, parentBlockId: string | null): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
         await flowApi.patchBlock(this.flowId, blockId, {
           parentBlockId: parentBlockId || null,
           clearParent: parentBlockId === null,
-        })
+        }, guard)
         await this.refresh()
-        this.recordTransaction('reparent', before)
+        this.recordTransaction('reparent', before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
         await this.refresh()
@@ -306,14 +357,15 @@ export const useFlowStore = defineStore('flow', {
       semanticKind: SemanticKind; codeType?: string | null
     }): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
         await flowApi.createPort(this.flowId, {
           blockId: port.blockId, name: port.name, direction: port.direction,
           semanticKind: port.semanticKind, codeType: port.codeType ?? null,
           positionOrder: 0,
-        })
+        }, guard)
         await this.refresh()
-        this.recordTransaction(`add port ${port.name}`, before)
+        this.recordTransaction(`add port ${port.name}`, before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
       }
@@ -323,10 +375,11 @@ export const useFlowStore = defineStore('flow', {
       name?: string; semanticKind?: string; codeType?: string | null
     }): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        await flowApi.patchPort(this.flowId, portId, body)
+        await flowApi.patchPort(this.flowId, portId, body, guard)
         await this.refresh()
-        this.recordTransaction('update port', before)
+        this.recordTransaction('update port', before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
       }
@@ -334,10 +387,11 @@ export const useFlowStore = defineStore('flow', {
 
     async deletePort(portId: string): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        await flowApi.deletePort(this.flowId, portId)
+        await flowApi.deletePort(this.flowId, portId, guard)
         await this.refresh()
-        this.recordTransaction('delete port', before)
+        this.recordTransaction('delete port', before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
       }
@@ -346,10 +400,11 @@ export const useFlowStore = defineStore('flow', {
     // -- net operations ---------------------------------------------------
     async connectPorts(sourcePortId: string, targetPortId: string): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        await flowApi.createNet(this.flowId, { sourcePortId, targetPortId })
+        await flowApi.createNet(this.flowId, { sourcePortId, targetPortId }, guard)
         await this.refresh()
-        this.recordTransaction('connect', before)
+        this.recordTransaction('connect', before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
         await this.refresh()
@@ -358,10 +413,11 @@ export const useFlowStore = defineStore('flow', {
 
     async deleteNets(ids: string[]): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        for (const id of ids) await flowApi.deleteNet(this.flowId, id)
+        for (const id of ids) await flowApi.deleteNet(this.flowId, id, guard)
         await this.refresh()
-        this.recordTransaction(`delete ${ids.length} net(s)`, before)
+        this.recordTransaction(`delete ${ids.length} net(s)`, before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
       }
@@ -370,10 +426,11 @@ export const useFlowStore = defineStore('flow', {
     // -- composite ---------------------------------------------------------
     async createComposite(name: string, blockIds: string[]): Promise<void> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
-        await flowApi.createComposite(this.flowId, name, blockIds)
+        await flowApi.createComposite(this.flowId, name, blockIds, guard)
         await this.refresh()
-        this.recordTransaction(`composite ${name}`, before)
+        this.recordTransaction(`composite ${name}`, before, guard)
       } catch (err) {
         toast(isApiError(err) ? err.message : String(err), 'error')
       }
@@ -493,12 +550,20 @@ export const useFlowStore = defineStore('flow', {
     /** Record a design transaction around the last mutation.  Call with
      * the snapshot captured BEFORE the mutation; after is captured from
      * the current dto (already refreshed). */
-    recordTransaction(label: string, before: DesignSnapshot): void {
+    recordTransaction(label: string, before: DesignSnapshot, guard: FlowMutationGuard): void {
+      if (!guard.commits || !guard.revision || this.flowId !== guard.flowId ||
+          this.dto?.eda?.revision !== guard.revision) {
+        this.undoStack = []
+        this.redoStack = []
+        toast('Design changed during this edit; Undo history was cleared', 'info')
+        return
+      }
       const after = this.snapshotDesign()
       this.undoStack.push({
         label,
         before: JSON.stringify(before),
         after: JSON.stringify(after),
+        revision: guard.revision,
         ts: Date.now(),
       })
       if (this.undoStack.length > 100) this.undoStack.shift()
@@ -513,11 +578,13 @@ export const useFlowStore = defineStore('flow', {
       if (!txn || !this.flowId) return
       const before = JSON.parse(txn.before) as DesignSnapshot
       const after = JSON.parse(txn.after) as DesignSnapshot
-      const ok = await this.restoreDesign(after, before)
+      const guard = { flowId: this.flowId, revision: txn.revision, commits: 0 }
+      const ok = await this.restoreDesign(after, before, guard)
       if (!ok) return
       this.undoStack.pop()
+      txn.revision = guard.revision
+      if (this.undoStack.length) this.undoStack[this.undoStack.length - 1].revision = guard.revision
       this.redoStack.push(txn)
-      await this.refresh()
     },
 
     async redo(): Promise<void> {
@@ -525,23 +592,29 @@ export const useFlowStore = defineStore('flow', {
       if (!txn || !this.flowId) return
       const before = JSON.parse(txn.before) as DesignSnapshot
       const after = JSON.parse(txn.after) as DesignSnapshot
-      const ok = await this.restoreDesign(before, after)
+      const guard = { flowId: this.flowId, revision: txn.revision, commits: 0 }
+      const ok = await this.restoreDesign(before, after, guard)
       if (!ok) return
       this.redoStack.pop()
+      txn.revision = guard.revision
+      if (this.redoStack.length) this.redoStack[this.redoStack.length - 1].revision = guard.revision
       this.undoStack.push(txn)
-      await this.refresh()
     },
 
     /** Diff `from` → `to` and apply inverse ops (design-plane only).
      * Order: blocks first (create missing), then ports, then nets. */
-    async restoreDesign(from: DesignSnapshot, to: DesignSnapshot): Promise<boolean> {
+    async restoreDesign(from: DesignSnapshot, to: DesignSnapshot,
+      guard: FlowMutationGuard): Promise<boolean> {
       const blocksTo = new Map(to.blocks.map((b) => [b.id, b]))
       const blocksFrom = new Map(from.blocks.map((b) => [b.id, b]))
       try {
+        if (this.dto?.eda?.revision !== guard.revision) {
+          throw new Error('Flow design changed before Undo/Redo')
+        }
         // 1) delete blocks present in `from` but not `to`
         for (const b of from.blocks) {
           if (!blocksTo.has(b.id)) {
-            await flowApi.deleteBlock(this.flowId, b.id)
+            await flowApi.deleteBlock(this.flowId, b.id, guard)
           }
         }
         // 2) create blocks missing in `from` (parents first, by snapshot order)
@@ -551,7 +624,7 @@ export const useFlowStore = defineStore('flow', {
               kind: b.kind, name: b.name, state: b.state,
               parentBlockId: b.parentBlockId ?? null,
               meta: JSON.parse(b.metaJson || '{}'),
-            })
+            }, guard)
           } else {
             const cur = blocksFrom.get(b.id)!
             if (cur.name !== b.name || cur.state !== b.state ||
@@ -560,9 +633,9 @@ export const useFlowStore = defineStore('flow', {
               await flowApi.patchBlock(this.flowId, b.id, {
                 name: b.name, state: b.state,
                 parentBlockId: b.parentBlockId ?? null,
-                clearParent: b.parentBlockId == null,
-                meta: JSON.parse(b.metaJson || '{}'),
-              })
+                  clearParent: b.parentBlockId == null,
+                  meta: JSON.parse(b.metaJson || '{}'),
+              }, guard)
             }
           }
         }
@@ -571,7 +644,7 @@ export const useFlowStore = defineStore('flow', {
         const portsTo = new Map(to.ports.map((p) => [p.id, p]))
         const portsFrom = new Map(from.ports.map((p) => [p.id, p]))
         for (const p of from.ports) {
-          if (!portsTo.has(p.id)) await flowApi.deletePort(this.flowId, p.id)
+          if (!portsTo.has(p.id)) await flowApi.deletePort(this.flowId, p.id, guard)
         }
         for (const p of to.ports) {
           if (!portsFrom.has(p.id)) {
@@ -579,14 +652,14 @@ export const useFlowStore = defineStore('flow', {
               blockId: p.blockId, name: p.name, direction: p.direction,
               semanticKind: p.semanticKind, codeType: p.codeType,
               positionOrder: p.positionOrder,
-            })
+            }, guard)
           }
         }
         await this.refresh()
         // 4) nets: delete extras, create missing (endpoints must exist)
         const netsTo = new Set(to.nets.map((n) => n.id))
         for (const n of from.nets) {
-          if (!netsTo.has(n.id)) await flowApi.deleteNet(this.flowId, n.id)
+          if (!netsTo.has(n.id)) await flowApi.deleteNet(this.flowId, n.id, guard)
         }
         const netsFrom = new Set(from.nets.map((n) => n.id))
         for (const n of to.nets) {
@@ -596,22 +669,37 @@ export const useFlowStore = defineStore('flow', {
               targetPortId: n.targetPortId,
               kind: n.kind,
               label: n.label,
-            })
+            }, guard)
           }
         }
         await this.refresh()
+        if (this.dto?.eda?.revision !== guard.revision) {
+          throw new Error('Flow design changed during Undo/Redo')
+        }
         return true
       } catch (err) {
+        this.undoStack = []
+        this.redoStack = []
+        await this.refresh()
         toast(isApiError(err) ? err.message : String(err), 'error')
         return false
       }
     },
 
     /** Re-usable wrapper: capture before, run mutation, record transaction. */
-    async withTransaction(label: string, run: () => Promise<void>): Promise<void> {
+    async withTransaction(label: string,
+      run: (guard: FlowMutationGuard) => Promise<void>): Promise<void> {
       const before = this.snapshotDesign()
-      await run()
-      this.recordTransaction(label, before)
+      const guard = this.mutationGuard()
+      try {
+        await run(guard)
+        this.recordTransaction(label, before, guard)
+      } catch (err) {
+        this.undoStack = []
+        this.redoStack = []
+        await this.refresh()
+        toast(isApiError(err) ? err.message : String(err), 'error')
+      }
     },
 
     /**
@@ -630,6 +718,7 @@ export const useFlowStore = defineStore('flow', {
       }>,
     ): Promise<boolean> {
       const before = this.snapshotDesign()
+      const guard = this.mutationGuard()
       try {
         let cacheBlockId = ''
         let cacheIn: string | null = null
@@ -639,10 +728,10 @@ export const useFlowStore = defineStore('flow', {
             const b = await flowApi.createBlock(this.flowId, {
               kind: op.block.kind, name: op.block.name, state: op.block.state,
               parentBlockId: op.block.parentBlockId ?? null,
-            })
+            }, guard)
             if (op.block.name === 'ResultCache') cacheBlockId = b.id
           } else if (op.op === 'removeBlock' && op.target) {
-            await flowApi.deleteBlock(this.flowId, op.target)
+            await flowApi.deleteBlock(this.flowId, op.target, guard)
           } else if (op.op === 'addPort' && op.port) {
             const pid = op.port.blockId === '__cache__'
               ? cacheBlockId : op.port.blockId
@@ -650,11 +739,11 @@ export const useFlowStore = defineStore('flow', {
             const p = await flowApi.createPort(this.flowId, {
               blockId: pid, name: op.port.name, direction: op.port.direction,
               semanticKind: op.port.semanticKind,
-            })
+            }, guard)
             if (op.port.name === 'result') cacheIn = p.id
             if (op.port.name === 'cached_result') cacheOut = p.id
           } else if (op.op === 'removeNet' && op.target) {
-            await flowApi.deleteNet(this.flowId, op.target)
+            await flowApi.deleteNet(this.flowId, op.target, guard)
           } else if (op.op === 'addNet' && op.net) {
             const src = op.net.sourcePortId === '__cacheout__'
               ? (cacheOut ?? '') : op.net.sourcePortId
@@ -664,26 +753,31 @@ export const useFlowStore = defineStore('flow', {
             await flowApi.createNet(this.flowId, {
               sourcePortId: src, targetPortId: dst, kind: op.net.kind,
               label: op.net.label ?? null,
-            })
+            }, guard)
           }
         }
+        await this.persistAgentAction(proposal, guard)
         await this.refresh()
       } catch (err) {
+        this.undoStack = []
+        this.redoStack = []
+        await this.refresh()
         toast(isApiError(err) ? err.message : String(err), 'error')
         return false
       }
-      this.recordTransaction(`agent:${proposal.intent}`, before)
+      this.recordTransaction(`agent:${proposal.intent}`, before, guard)
       this.agentActions.push(proposal)
-      void this.persistAgentAction(proposal)
       return true
     },
 
-    async persistAgentAction(action: AgentActionRecord): Promise<void> {
+    async persistAgentAction(action: AgentActionRecord,
+      guard?: FlowMutationGuard): Promise<void> {
       if (!this.flowId) return
       try {
-        await flowApi.recordAgentAction(this.flowId, action)
-      } catch {
-        /* best-effort provenance */
+        await flowApi.recordAgentAction(this.flowId, action, guard)
+      } catch (err) {
+        if (guard) throw err
+        /* best-effort provenance for callers without a guarded patch */
       }
     },
 
@@ -694,9 +788,9 @@ export const useFlowStore = defineStore('flow', {
     async saveBlockAnnotation(
       blockId: string, ann: Record<string, unknown>,
     ): Promise<void> {
-      await this.withTransaction('annotation', async () => {
+      await this.withTransaction('annotation', async (guard) => {
         try {
-          await flowApi.patchBlock(this.flowId, blockId, { meta: { design: ann } })
+          await flowApi.patchBlock(this.flowId, blockId, { meta: { design: ann } }, guard)
         } catch (err) {
           toast(isApiError(err) ? err.message : String(err), 'error')
           throw err
@@ -706,11 +800,12 @@ export const useFlowStore = defineStore('flow', {
     },
 
     async renameBlock(blockId: string, name: string): Promise<void> {
-      await this.withTransaction('rename', async () => {
+      await this.withTransaction('rename', async (guard) => {
         try {
-          await flowApi.patchBlock(this.flowId, blockId, { name })
+          await flowApi.patchBlock(this.flowId, blockId, { name }, guard)
         } catch (err) {
           toast(isApiError(err) ? err.message : String(err), 'error')
+          throw err
         }
         await this.refresh()
       })
@@ -720,11 +815,12 @@ export const useFlowStore = defineStore('flow', {
       kind?: string; label?: string | null; clearLabel?: boolean
       meta?: Record<string, unknown> | null
     }): Promise<void> {
-      await this.withTransaction('net-edit', async () => {
+      await this.withTransaction('net-edit', async (guard) => {
         try {
-          await flowApi.patchNet(this.flowId, netId, body)
+          await flowApi.patchNet(this.flowId, netId, body, guard)
         } catch (err) {
           toast(isApiError(err) ? err.message : String(err), 'error')
+          throw err
         }
         await this.refresh()
       })

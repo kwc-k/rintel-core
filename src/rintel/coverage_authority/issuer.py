@@ -81,6 +81,7 @@ class CoverageAuthority:
                 subject.get("path") != relative.as_posix()):
             raise CoverageUnavailable("subject is not a canonical function in exact TU")
         compdb = Path(compile_commands).resolve()
+        compdb_digest = _sha(compdb)
         clang = detect_clang_identity(self.clang_executable)
         row = exact_compile_row(compdb, source)
         unit = load_translation_unit(row, clang, provider_version=PROVIDER_VERSION,
@@ -116,10 +117,9 @@ class CoverageAuthority:
             projection_identity="canonical-evidence", projection_version="1",
             publication_policy=PublicationPolicy.STAGE_ONLY,
         )
-        script = Path(__file__).resolve().parents[3] / "scripts/rpp_clang_provider.py"
         with tempfile.TemporaryDirectory(prefix="rintel-coverage-") as scratch:
             host_result = ProviderHost(
-                [sys.executable, str(script)],
+                [sys.executable, "-m", "rintel.clang_provider.process"],
                 staging_root=Path(scratch) / "staging",
                 publication_store=CanonicalPublicationStore(
                     Path(scratch) / "unused-publication"),
@@ -137,12 +137,42 @@ class CoverageAuthority:
         # A fresh direct frontend audit does not trust RPP's generic coverage
         # level as direct-call absence authority.
         frontend = ClangFrontend(max_output_bytes=768 * 1024 * 1024).analyze(unit)
-        candidates = tuple(host_result.staged_result.facts)
+        # rpp/1 still carries provider-local legacy spellings.  Rintel, not
+        # the provider, binds them to the exact current C identity.  A same-
+        # named Python/Fortran symbol is never an alternative C target.
+        from dataclasses import replace
+        current_c_functions = [node for node in self.store.all_nodes(
+            repo_id, base_revision) if node["kind"] == "FUNCTION"
+            and node["language"] == "c"]
+
+        def resolve_c_name(name: str) -> str | None:
+            matches = [node["id"] for node in current_c_functions
+                       if node["qname"] == name]
+            return matches[0] if len(matches) == 1 else None
+
+        def bind_provider_id(value: str) -> str:
+            if not value.startswith("node:FUNCTION:") or ":v2:" in value:
+                return value
+            bound = resolve_c_name(value.removeprefix("node:FUNCTION:"))
+            if bound is None:
+                raise CoverageUnavailable(
+                    f"Clang provider identity not uniquely bound: {value}")
+            return bound
+
+        candidates = tuple(
+            replace(fact, subject=bind_provider_id(fact.subject),
+                    object=(bind_provider_id(fact.object)
+                            if isinstance(fact.object, str) and
+                            fact.object_is_identity else fact.object))
+            if (fact.witness.get("provider_local", {}).get("kind") == "Function"
+                or fact.predicate == "CALL") else fact
+            for fact in host_result.staged_result.facts)
         edges = {row["id"] for row in self.store.all_edges(repo_id, base_revision)}
         exhaustive, reasons, direct = audit_direct_body(
             frontend.ast, frontend.diagnostics, source=source,
             subject_id=subject_id, candidates=candidates,
-            existing_edges=edges)
+            existing_edges=edges, subject_name=subject["name"],
+            resolve_target=resolve_c_name)
         function_facts = [fact for fact in candidates
                           if fact.subject == subject_id and fact.witness.get(
                               "provider_local", {}).get("kind") == "Function"
@@ -152,10 +182,11 @@ class CoverageAuthority:
             raise CoverageUnavailable("Clang subject function identity not unique")
         if unit.language != "c":
             reasons.append("cxx_outside_first_complete_capability")
-        if _sha(source) != unit.source_digest or any(
+        if _sha(compdb) != compdb_digest or _sha(source) != unit.source_digest or any(
                 _sha(Path(path)) != prior
                 for path, prior in dependency_digests.items()):
-            raise CoverageUnavailable("source or dependency changed during analysis")
+            raise CoverageUnavailable(
+                "compile command, source, or dependency changed during analysis")
         completeness = "COMPLETE" if exhaustive and not reasons else "PARTIAL"
         # SQLite's LifecycleRepository DDL uses executescript, which commits
         # any open transaction. Initialize it before staging publication.
@@ -180,7 +211,10 @@ class CoverageAuthority:
                 function_facts[0], revision=revision, owner_path=relative.as_posix(),
                 kind="node", fact_kind="FUNCTION", fact_id=subject_id,
                 source_ids=None, state=state, unit=unit,
-                analysis_id=analysis_id, qname=subject["qname"]))
+                analysis_id=analysis_id, qname=subject["qname"],
+                compile_commands_path=str(compdb),
+                compile_commands_digest=compdb_digest,
+                dependency_digests=dependency_digests))
             if exhaustive:
                 for fact in candidates:
                     if fact.subject != subject_id or fact.predicate != "CALL" \
@@ -192,7 +226,10 @@ class CoverageAuthority:
                         fact, revision=revision, owner_path=relative.as_posix(),
                         kind="edge", fact_kind="CALLS", fact_id=edge_id,
                         source_ids=(subject_id, fact.object), state=state,
-                        unit=unit, analysis_id=analysis_id))
+                        unit=unit, analysis_id=analysis_id,
+                        compile_commands_path=str(compdb),
+                        compile_commands_digest=compdb_digest,
+                        dependency_digests=dependency_digests))
             if self.store.unsupported_new_facts(repo_id, revision, base_revision):
                 raise CoverageUnavailable("support overlay lost canonical lineage")
             self.store.publish_snapshot(repo_id, revision)
@@ -254,7 +291,10 @@ class CoverageAuthority:
             self, fact: EvidenceCandidate, *, revision: str, owner_path: str,
             kind: str, fact_kind: str, fact_id: str,
             source_ids: tuple[str, str] | None, state: CanonicalStateRef,
-            unit: Any, analysis_id: str, qname: str | None = None) -> str:
+            unit: Any, analysis_id: str, qname: str | None = None,
+            compile_commands_path: str,
+            compile_commands_digest: str,
+            dependency_digests: dict[str, str]) -> str:
         claim = ClaimPayload(
             claim_id=fact.provider_fact_id, subject=fact.subject,
             predicate="NODE" if kind == "node" else fact_kind,
@@ -275,6 +315,10 @@ class CoverageAuthority:
         provenance = dict(fact.witness.get("provenance", {}))
         provenance.update({"analysis_id": analysis_id,
                            "clang_binary_sha256": unit.clang.binary_sha256,
+                           "clang_executable": unit.clang.executable,
+                           "compile_commands_path": compile_commands_path,
+                           "compile_commands_sha256": compile_commands_digest,
+                           "dependency_digests": dict(dependency_digests),
                            "raw_command_digest": unit.raw_command_digest,
                            "source_digest": unit.source_digest,
                            "tu_identity": unit.tu_identity})

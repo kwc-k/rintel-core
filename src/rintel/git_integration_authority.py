@@ -66,13 +66,14 @@ class GitIntegrationAuthority:
         ref = change.design_revision.flow_model_ref
         if ref is None:
             rows = candidate.all_nodes(change.repo_id, snapshot_id)
-            edges = _edges_for(candidate, change.repo_id, snapshot_id)
+            edges = _edges_for(candidate, change.repo_id, snapshot_id,
+                               source_root=source_root)
             code = build_code_side_from_rows(rows, edges, source_root, snapshot_id)
             result = run_lvs(
                 {"snapshot_id": change.design_revision.id, "blocks": [],
                  "composites": [], "ports": [], "nets": [], "claims": []},
                 {"snapshot_id": snapshot_id, "baseline_id": None,
-                 "baseline_functions": [], "baseline_edges": [],
+                 "baseline_functions": {}, "baseline_edges": [],
                  "functions": code.functions, "edges": code.edges,
                  "resources": code.resources, "call_capability": "PARTIAL",
                  "data_capability": "PARTIAL"}).to_dict()
@@ -85,13 +86,16 @@ class GitIntegrationAuthority:
         dto = FlowService(self.production_store).get_flow(ref.identity)
         design = design_from_flow_dto(dto)
         rows = candidate.all_nodes(change.repo_id, snapshot_id)
-        edges = _edges_for(candidate, change.repo_id, snapshot_id)
+        edges = _edges_for(candidate, change.repo_id, snapshot_id,
+                           source_root=source_root)
         code = build_code_side_from_rows(rows, edges, source_root, snapshot_id)
-        call_capability = ("COMPLETE" if candidate.unresolved_count(
-            change.repo_id, snapshot_id) == 0 else "PARTIAL")
+        # Generic Flow control nets do not bind the certificate's exact
+        # DIRECT_STATIC_CALL domain. Unresolved-count zero is not absence
+        # authority, even when the graph has no missing targets.
+        call_capability = "PARTIAL"
         result = run_lvs(design, {
             "snapshot_id": snapshot_id, "baseline_id": None,
-            "baseline_functions": [], "baseline_edges": [],
+            "baseline_functions": {}, "baseline_edges": [],
             "functions": code.functions, "edges": code.edges,
             "resources": code.resources, "call_capability": call_capability,
             "data_capability": "PARTIAL",
@@ -194,7 +198,9 @@ class GitIntegrationAuthority:
         if not drc["acceptable"]:
             diagnostics.append("DRC_FAILURE")
         if not lvs.get("acceptable"):
-            diagnostics.append("LVS_MISMATCH")
+            diagnostics.append(
+                "LVS_UNKNOWN" if lvs.get("overall_status") == "UNKNOWN"
+                else "LVS_MISMATCH")
         if build["result"] != "PASS":
             diagnostics.append("BUILD_FAILURE")
         if test["result"] != "PASS":

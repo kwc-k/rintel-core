@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import dataclasses
+import subprocess
 import json
 from pathlib import Path
 import sqlite3
@@ -121,13 +122,24 @@ class JobManager:
 
 
 def make_index_runner(store_factory: Callable[[], Store], repo_id: str,
-                      force: bool = False):
+                      force: bool = False, commit: str | None = None):
     """Build the job runner closure for `POST /repos/{id}/index`."""
     def runner(job: dict, tick) -> dict:
         store = store_factory()
         try:
             root = store.repo(repo_id)["root_path"]
-            idx = Indexer(store, root, repo_id=repo_id, force=force)
+            if commit is not None:
+                # A lifecycle job must not silently erase the Git identity of
+                # a revision already bound to an observed merged commit.
+                git = ["git", "-c", f"safe.directory={root}", "-C", root]
+                head = subprocess.run([*git, "rev-parse", "HEAD"],
+                                      text=True, capture_output=True, check=True).stdout.strip()
+                status = subprocess.run([*git, "status", "--porcelain=v1"],
+                                        text=True, capture_output=True, check=True).stdout
+                if head != commit or status.strip():
+                    raise RuntimeError("linked index job source is not the clean bound Git commit")
+            idx = Indexer(store, root, repo_id=repo_id, force=force,
+                          commit=commit)
             res = idx.index(on_progress=tick)
             return dataclasses.asdict(res)
         finally:

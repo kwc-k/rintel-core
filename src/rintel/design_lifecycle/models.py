@@ -267,3 +267,4 @@ class DesignMutation:
     operation: str
     payload: dict[str, Any]
     expected_version: int | None = None
+    expected_design_revision: str | None = None

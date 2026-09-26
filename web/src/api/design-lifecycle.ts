@@ -20,6 +20,13 @@ export interface DesignMutationResponse<T> extends DesignChange {
   mutation_result: T
 }
 
+/** UI history uses the exact Flow revision observed before its first write. */
+export interface FlowMutationGuard {
+  flowId: string
+  revision: string
+  commits: number
+}
+
 let activeDesignChangeId: string | null = null
 
 export function setActiveDesignChange(changeId: string | null): void {
@@ -50,15 +57,35 @@ export function applyDesignCommand(
     })
 }
 
-export function applyDesignMutation<T>(
+export async function applyDesignMutation<T>(
   plane: 'architecture' | 'flow', operation: string,
   payload: Record<string, unknown>, actor = 'human:ui',
+  flowGuard?: FlowMutationGuard,
 ): Promise<T> {
   const changeId = requireActiveDesignChange()
-  return apiPost<DesignMutationResponse<T>>(
+  const change = await apiGet<DesignChange>(`/design-changes/${changeId}`)
+  if (activeDesignChangeId !== changeId || change.id !== changeId) {
+    throw new Error('DesignChange context changed before mutation')
+  }
+  if (flowGuard) {
+    const ref = change.design_revision.flow_model_ref
+    if (plane !== 'flow' || !flowGuard.revision ||
+        ref?.identity !== flowGuard.flowId || ref.revision !== flowGuard.revision) {
+      throw new Error('Flow design changed before mutation; refresh before retry')
+    }
+  }
+  const response = await apiPost<DesignMutationResponse<T>>(
     `/design-changes/${changeId}/commands`,
-    { command: 'design_mutation', actor, plane, operation, payload },
-  ).then((response) => response.mutation_result)
+    { command: 'design_mutation', actor, plane, operation, payload,
+      change_version: change.version,
+      expected_design_revision: change.design_revision.id },
+  )
+  if (flowGuard) {
+    const ref = response.design_revision.flow_model_ref
+    flowGuard.revision = ref?.identity === flowGuard.flowId ? ref.revision : ''
+    if (flowGuard.revision) flowGuard.commits += 1
+  }
+  return response.mutation_result
 }
 
 export function getDesignChange(changeId: string): Promise<DesignChange> {

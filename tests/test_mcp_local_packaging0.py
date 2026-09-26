@@ -274,6 +274,11 @@ def test_design_preset_only_explicitly_exposes_bounded_tools(tmp_path: Path):
     try:
         names = {t["name"] for t in mcp.call("tools/list")["result"]["tools"]}
         assert "create_design" in names
+        assert "mutate_flow_design" in names
+        denied = mcp.tool("mutate_flow_design", {
+            "change_id": "change-unknown", "stable_id": "flow-unknown",
+            "operation": "add_block", "ops": [{"flow_id": "flow-unknown"}]})
+        assert denied["error"]["code"] == "MISSING_REQUIRED_ARGUMENT"
         assert "request_agent_execution" in names
         assert "publish_canonical" not in names
         assert "shell" not in names

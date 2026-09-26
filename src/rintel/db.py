@@ -129,10 +129,14 @@ class Database:
                      commit: str | None = None,
                      meta: dict | None = None) -> str:
         sid = f"s-{uuid.uuid4().hex[:12]}"
+        prior = self.conn.execute(
+            "SELECT MAX(created_at) FROM snapshots WHERE repo_id=?",
+            (repo_id,)).fetchone()[0]
+        created_at = max(self.now(), int(prior or 0) + 1)
         self.conn.execute(
             "INSERT INTO snapshots(id, repo_id, parent_id, commit_sha,"
             " publication_status, created_at, meta_json) VALUES (?,?,?,?,?,?,?)",
-            (sid, repo_id, parent_id, commit, "staging", self.now(),
+            (sid, repo_id, parent_id, commit, "staging", created_at,
              json.dumps(meta or {})))
         return sid
 
@@ -150,7 +154,7 @@ class Database:
     def current_snapshot(self, repo_id: str) -> Optional[str]:
         r = self.conn.execute(
             "SELECT id FROM snapshots WHERE repo_id=?"
-            " AND publication_status='published' ORDER BY created_at DESC "
+            " AND publication_status='published' ORDER BY created_at DESC, rowid DESC "
             "LIMIT 1", (repo_id,)).fetchone()
         return r["id"] if r else None
 
@@ -1812,7 +1816,7 @@ class Database:
     def flow_ports(self, flow_id: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
             f"SELECT {self.PORT_COLS}, meta_json FROM flow_ports"
-            " WHERE flow_model_id=? ORDER BY block_id, position_order",
+            " WHERE flow_model_id=? ORDER BY block_id, position_order, id",
             (flow_id,)).fetchall()]
 
     def flow_port(self, flow_id: str, port_id: str) -> Optional[dict]:
@@ -1823,7 +1827,7 @@ class Database:
     def flow_create_port(self, flow_id: str, *, block_id: str, name: str,
                          direction: str, semantic_kind: str,
                          code_type: str | None = None,
-                         position_order: int = 0,
+                         position_order: int | None = None,
                          meta: dict | None = None) -> dict:
         bid, now = str(uuid.uuid4()), self.now()
         with self._flow_tx():
@@ -1831,17 +1835,22 @@ class Database:
             if not block:
                 raise FlowError("block_not_in_flow", "block not in flow",
                                 {"block_id": block_id})
-            for p in self.flow_ports(flow_id):
+            existing = self.flow_ports(flow_id)
+            for p in existing:
                 if p["block_id"] == block_id and p["name"] == name:
                     raise FlowError(
                         "port_name_exists", "port name already exists in block",
                         {"block_id": block_id, "port": name})
+            order = (position_order if position_order is not None else
+                     max((p["position_order"] for p in existing
+                          if p["block_id"] == block_id and
+                          p["direction"] == direction), default=-1) + 1)
             self.conn.execute(
                 "INSERT INTO flow_ports(id, flow_model_id, block_id, name,"
                 " direction, semantic_kind, code_type, position_order,"
                 " meta_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (bid, flow_id, block_id, name, direction, semantic_kind,
-                 code_type, position_order, json.dumps(meta or {}), now))
+                 code_type, order, json.dumps(meta or {}), now))
         p = self.flow_port(flow_id, bid)
         assert p is not None
         return p

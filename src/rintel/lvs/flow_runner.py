@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..evidence_authority.positive_relation import direct_static_call_presence
 from .engine import run_lvs
 from .signatures import build_code_side_from_rows
 
@@ -79,7 +80,8 @@ def lvs_flow(store, flow_id: str) -> dict:
     code_sid = store.current_snapshot(flow["repo_id"]) or design_sid
 
     rows = store.all_nodes(flow["repo_id"], code_sid)
-    edges = _edges_for(store, flow["repo_id"], code_sid)
+    edges = _edges_for(store, flow["repo_id"], code_sid,
+                       source_root=repo["root_path"])
     code = build_code_side_from_rows(rows, edges, repo["root_path"], code_sid)
 
     # snapshot-aware baseline (§17): the flow's design snapshot rows
@@ -94,9 +96,10 @@ def lvs_flow(store, flow_id: str) -> dict:
         except Exception:
             baseline_rows = []
 
-    call_cap = ("COMPLETE" if
-                store.unresolved_count(flow["repo_id"], code_sid) == 0
-                else "PARTIAL")
+    # No unresolved candidates is not a bounded absence certificate. Flow
+    # control nets do not carry DIRECT_STATIC_CALL scope, so their missing
+    # edges remain UNKNOWN rather than manufacturing a negative fact.
+    call_cap = "PARTIAL"
     data_cap = "PARTIAL"           # no resolved DATA wires in index lanes
     result = run_lvs(design, {
         "snapshot_id": code.snapshot_id,
@@ -121,7 +124,8 @@ def lvs_flow(store, flow_id: str) -> dict:
     return out
 
 
-def _edges_for(store, repo_id: str, sid: str) -> list[dict]:
+def _edges_for(store, repo_id: str, sid: str, *,
+               source_root: str | None = None) -> list[dict]:
     edges = []
     for e in store.all_edges(repo_id, sid):
         kind = (e.get("kind") or "").upper()
@@ -129,13 +133,41 @@ def _edges_for(store, repo_id: str, sid: str) -> list[dict]:
         if kind not in ("CALL", "DATA", "STATE", "CONTROL", "TIME",
                         "RESOURCE"):
             continue
+        support = store.support_receipts(repo_id, sid, e["id"])
+        # A graph edge is not itself proof of EXACT/COMPLETE.  The previous
+        # adapter fabricated hard-call dimensions for every legacy candidate.
+        # Only unanimous sealed support at the strongest lattice point can
+        # satisfy the LVS deterministic-call MATCH predicate.
+        hard = bool(support) and all(
+            row.get("truth_class") in {"OBSERVED", "RESOLVED"}
+            and row.get("execution_modality") == "MUST"
+            and row.get("target_resolution") == "EXACT"
+            and row.get("coverage") == "COMPLETE"
+            for row in support)
+        static = direct_static_call_presence(
+            store, repo_id, sid, e, support, source_root=source_root)
         edges.append({
             "kind": kind,
             "source": e.get("src_id") or e.get("source"),
             "target": e.get("dst_id") or e.get("target"),
-            "truth_class": "OBSERVED",
-            "execution_modality": "MUST",
-            "target_resolution": "EXACT",
-            "coverage": "COMPLETE",
+            "truth_class": "OBSERVED" if hard else "INFERRED",
+            "execution_modality": "MUST" if hard else "MAY",
+            "target_resolution": "EXACT" if hard else "UNKNOWN",
+            "coverage": "COMPLETE" if hard else "PARTIAL",
+            "static_presence": static["state"],
+            "static_presence_rule_version": static["rule_version"],
+            "static_presence_support_receipt_ids": static[
+                "support_receipt_ids"],
+            "static_presence_support_dimensions": static.get(
+                "support_dimensions", []),
+            "static_presence_evidence_authority": static.get(
+                "evidence_authority", "UNKNOWN"),
+            "static_presence_provider_status": static.get(
+                "provider_status", "UNKNOWN"),
+            "runtime_state": static["runtime_state"],
+            "representative_witnesses": [
+                {"support_receipt_id": row["support_receipt_id"]}
+                for row in support],
+            "source_span": support[0].get("source_span") if support else None,
         })
     return edges

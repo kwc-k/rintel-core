@@ -145,11 +145,15 @@ class PgStore:
                      commit: str | None = None,
                      meta: dict | None = None) -> str:
         sid = f"s-{uuid.uuid4().hex[:12]}"
+        prior = self.conn.execute(
+            "SELECT MAX(created_at) AS created_at FROM snapshots WHERE repo_id=%s",
+            (repo_id,)).fetchone()["created_at"]
+        created_at = max(self.now(), int(prior or 0) + 1)
         self.conn.execute(
             "INSERT INTO snapshots(id, repo_id, parent_id, commit_sha,"
             " publication_status, created_at, meta)"
             " VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (sid, repo_id, parent_id, commit, "staging", self.now(),
+            (sid, repo_id, parent_id, commit, "staging", created_at,
              Jsonb(meta or {})))
         return sid
 
@@ -170,7 +174,7 @@ class PgStore:
     def current_snapshot(self, repo_id: str) -> Optional[str]:
         r = self.conn.execute(
             "SELECT id FROM snapshots WHERE repo_id=%s"
-            " AND publication_status='published' ORDER BY created_at DESC"
+            " AND publication_status='published' ORDER BY created_at DESC, id DESC"
             " LIMIT 1", (repo_id,)).fetchone()
         return r["id"] if r else None
 
@@ -1926,7 +1930,7 @@ class PgStore:
         return [_srow(r) for r in self.conn.execute(
             f"SELECT {self.PORT_COLS}, meta::text AS meta_json FROM"
             " flow_ports WHERE flow_model_id=%s"
-            " ORDER BY block_id, position_order",
+            " ORDER BY block_id, position_order, id",
             (_u(flow_id),)).fetchall()]
 
     def flow_port(self, flow_id: str, port_id: str) -> Optional[dict]:
@@ -1939,7 +1943,7 @@ class PgStore:
     def flow_create_port(self, flow_id: str, *, block_id: str, name: str,
                          direction: str, semantic_kind: str,
                          code_type: str | None = None,
-                         position_order: int = 0,
+                         position_order: int | None = None,
                          meta: dict | None = None) -> dict:
         pid, now = str(uuid.uuid4()), self.now()
         with self._arch_tx():
@@ -1947,17 +1951,22 @@ class PgStore:
             if not block:
                 raise FlowError("block_not_in_flow", "block not in flow",
                                 {"block_id": block_id})
-            for p in self.flow_ports(flow_id):
+            existing = self.flow_ports(flow_id)
+            for p in existing:
                 if p["block_id"] == block_id and p["name"] == name:
                     raise FlowError(
                         "port_name_exists", "port name already exists in block",
                         {"block_id": block_id, "port": name})
+            order = (position_order if position_order is not None else
+                     max((p["position_order"] for p in existing
+                          if p["block_id"] == block_id and
+                          p["direction"] == direction), default=-1) + 1)
             self.conn.execute(
                 "INSERT INTO flow_ports(id, flow_model_id, block_id, name,"
                 " direction, semantic_kind, code_type, position_order, meta,"
                 " created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (pid, _u(flow_id), _u(block_id), name, direction,
-                 semantic_kind, code_type, position_order, Jsonb(meta or {}),
+                 semantic_kind, code_type, order, Jsonb(meta or {}),
                  now))
         p = self.flow_port(flow_id, pid)
         assert p is not None

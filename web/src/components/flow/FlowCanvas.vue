@@ -12,6 +12,7 @@ import { useFlowStore } from '../../stores/flow'
 import { useDesignStore, type CtxMenuItem } from '../../stores/design'
 import type { FlowBlock, FlowNet, FlowPort } from '../../domain/flow'
 import FlowBlockNode from './FlowBlockNode.vue'
+import { FLOW_NODE_WIDTH, layoutNodePorts, x6PortGroup } from './port-routing'
 
 const store = useFlowStore()
 const design = useDesignStore()
@@ -20,7 +21,7 @@ const container = ref<HTMLDivElement | null>(null)
 
 let graph: Graph | null = null
 const NODE_SHAPE = 'flow-block'
-const NODE_W = 230
+const NODE_W = FLOW_NODE_WIDTH
 
 let registered = false
 function ensureShapeRegistered(): void {
@@ -29,23 +30,21 @@ function ensureShapeRegistered(): void {
   registered = true
 }
 
-const GROUPS: Record<string, { position: 'left' | 'right' | 'top' | 'bottom'; attrs: Record<string, any> }> = {
-  'data-in': { position: 'left', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-data)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
-  'data-out': { position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-data)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
-  'control-in': { position: 'left', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-control)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
-  'control-out': { position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-control)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
-  'event-in': { position: 'left', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-time)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
-  'event-out': { position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-time)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
-  'error-in': { position: 'left', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--status-error)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
-  'error-out': { position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--status-error)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
-  'resource-in': { position: 'left', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-resource)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
-  'resource-out': { position: 'right', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-resource)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
+const GROUPS: Record<string, { position: 'absolute'; attrs: Record<string, any> }> = {
+  'data-in': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-data)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
+  'data-out': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-data)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
+  'control-in': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-control)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
+  'control-out': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-control)', strokeWidth: 1.5, fill: 'var(--panel-bg)' }, portLabel: { fontSize: 8, fill: 'var(--text-secondary)' } } },
+  'event-in': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-time)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
+  'event-out': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-time)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
+  'error-in': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--status-error)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
+  'error-out': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--status-error)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
+  'resource-in': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-resource)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
+  'resource-out': { position: 'absolute', attrs: { circle: { r: 4, magnet: true, stroke: 'var(--topo-resource)', strokeWidth: 1.5, fill: 'var(--panel-bg)' } } },
 }
 
 function nodeHeight(block: FlowBlock, ports: FlowPort[]): number {
-  const n = ports.filter((p) => p.direction === 'input').length +
-    ports.filter((p) => p.direction === 'output').length
-  return 62 + Math.max(n, 2) * 13 + (block.kind === 'composite' ? 14 : 0)
+  return layoutNodePorts(block, ports).height
 }
 
 /** Initial placement: stored layout, else dagre (only for missing nodes). */
@@ -127,20 +126,13 @@ function alignSelectedLeft(): void {
 }
 
 function buildPorts(block: FlowBlock): Array<{
-  id: string; group: string; args?: { order?: number }
+  id: string; group: string; args?: { x: number; y: number }
 }> {
   const bports = store.ports.filter((p) => p.blockId === block.id)
-  const items: Array<{ id: string; group: string; args?: { order?: number } }> = []
-  const side = (p: FlowPort) => p.direction === 'input' ? 0 : 1
-  const order = (p: FlowPort) => p.semanticKind === 'control' ? 1000 : p.positionOrder
-  const sorted = [...bports].sort((a, b) => side(a) - side(b) || order(a) - order(b))
-  const counts = [0, 0]
-  for (const p of sorted) {
-    const s = side(p)
-    const group = `${p.semanticKind}-${p.direction}`
-    items.push({ id: p.id, group, args: { order: counts[s]++ } })
-  }
-  return items
+  const layout = layoutNodePorts(block, bports)
+  return [...layout.inputs, ...layout.outputs].map((port) => ({
+    id: port.id, group: x6PortGroup(port), args: layout.points[port.id],
+  }))
 }
 
 const rendered = new Map<string, Cell>()
@@ -186,12 +178,17 @@ function syncGraph(): void {
       rendered.set(b.id, node)
     } else {
       const node = cell
+      let changed = false
       if (node.getSize().height !== nodeHeight(b, data.ports as FlowPort[])) {
         node.prop('size', { width: NODE_W, height: nodeHeight(b, data.ports as FlowPort[]) })
+        changed = true
       }
       const prevData = node.getData()
       const dataJson = JSON.stringify(data)
-      if (!prevData || JSON.stringify(prevData) !== dataJson) node.setData(data)
+      if (!prevData || JSON.stringify(prevData) !== dataJson) {
+        node.setData(data)
+        changed = true
+      }
       const want = JSON.stringify(buildPorts(b))
       const have = JSON.stringify(node.getPorts().map((p) => ({ id: p.id, group: p.group, args: p.args })))
       if (want !== have) {
@@ -207,10 +204,12 @@ function syncGraph(): void {
           }
         }
         node.prop('ports', { groups: GROUPS, items: buildPorts(b) })
+        changed = true
       }
       // x6-vue-shape re-renders when the cell's `component` prop changes;
-      // bump it so the block template picks up fresh data (name/ports).
-      node.prop('component', ((node.getProp('component') as number) ?? 0) + 1)
+      // bump only for changed data/ports. A no-op sync (including node click)
+      // must not unmount an open port detail card.
+      if (changed) node.prop('component', ((node.getProp('component') as number) ?? 0) + 1)
     }
   }
   for (const n of nets) {
