@@ -201,7 +201,8 @@ class CoverageAuthority:
             meta = json.loads(meta) if isinstance(meta, str) else dict(meta or {})
             meta.update({"run_id": analysis_id, "mode": "coverage_support_overlay",
                          "coverage_parent_revision": base_revision})
-            revision = self.store.new_snapshot(repo_id, base_revision, meta=meta)
+            revision = self.store.new_snapshot(
+                repo_id, base_revision, commit=snap.get("commit_sha"), meta=meta)
             # Exact graph copy; this issuer adds provenance, not graph facts.
             Indexer(self.store, str(root), repo_id=repo_id)._copy_previous(
                 revision, base_revision)

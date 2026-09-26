@@ -1,0 +1,64 @@
+{
+  "node": "RINTEL-v0.2.0-RELEASE-CLOSURE",
+  "stage": "candidate_pre_merge",
+  "base_main_sha": "68d0c3e9cefb5a84b2d6a47a6cc64c94095417ca",
+  "production_closure": {
+    "witness": "tests/test_git_integration_clang_closure.py::test_real_clang_candidate_to_production_closure",
+    "result": "PASS",
+    "observed_chain": [
+      "owner-authorized DesignChange",
+      "bounded Git worktree edit",
+      "real C11 BUILD and executable TEST",
+      "exact-commit candidate index plus Clang support/coverage",
+      "support-aware LVS MATCH",
+      "MERGE_ELIGIBLE",
+      "authorized Git merge",
+      "production CURRENT bound to merged commit",
+      "production re-index/adoption",
+      "DesignChange EVIDENCE_MATCHED"
+    ],
+    "support_dimensions": {
+      "truth_class": "OBSERVED",
+      "execution_modality": "MAY",
+      "target_resolution": "EXACT",
+      "coverage": "UNKNOWN"
+    },
+    "no_truth_promotion": true
+  },
+  "negative_controls": {
+    "witness": "tests/test_git_integration_clang_admission.py",
+    "valid_compdb": "MATCH",
+    "missing_compdb": "UNKNOWN/NOT_MERGE_ELIGIBLE",
+    "wrong_translation_unit": "UNKNOWN/NOT_MERGE_ELIGIBLE",
+    "candidate_does_not_mutate_production_current": true
+  },
+  "regression": {
+    "backend_sqlite_and_isolated_postgresql": "63 PASS / 0 SKIP",
+    "web_unit": "22 PASS",
+    "web_typecheck": "PASS",
+    "web_production_build": "PASS",
+    "port_order_independent_processes": "20/20 PASS",
+    "chrome_live_eda_multiport": "PASS",
+    "fac_bounded_index": {
+      "source_commit": "ff749a2ea0fd8a01f4fc744de4432e93834720f8",
+      "files": 375,
+      "cold_files_parsed": 375,
+      "cold_wall_ms": 8558,
+      "no_change_files_parsed": 0,
+      "no_change_wall_ms": 61,
+      "nodes": 3586,
+      "edges": 8305,
+      "known_scientific_symbols_found": ["PRateCoefficients", "DGESV", "f_dgesv"]
+    }
+  },
+  "release_artifact_preflight": {
+    "source_archive_two_builds_same_sha256": "660b789fe665ac8de89e6effb63217309a07b55b19b2d807d796cc60c238a181",
+    "archive_excludes_local_environment_and_datastore": true,
+    "fresh_archive_install": "PASS_MACOS_ARM64_PRE_MERGE",
+    "fresh_archive_tested_sha256": "132d16f9a992d4c64f6897c6d71e90ef0346b2c1469ebdf9090d1e58235acafe",
+    "fresh_archive_version": "rintel 0.2.0 / schema 2",
+    "fresh_archive_http": "200_OK_LOOPBACK",
+    "fresh_archive_fac_index": "375_FILES_3586_NODES_8305_EDGES"
+  },
+  "release_verdict": "PENDING_FRESH_MAIN_AND_ARCHIVE_ACCEPTANCE"
+}

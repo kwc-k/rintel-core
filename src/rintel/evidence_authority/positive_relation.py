@@ -35,9 +35,12 @@ def _exact_source_in_compdb(compdb: Path, source: Path) -> bool:
     for row in rows:
         if not isinstance(row, dict):
             return False
+        directory = Path(str(row.get("directory", "")))
+        if not directory.is_absolute():
+            directory = (compdb.parent / directory).resolve()
         path = Path(str(row.get("file", "")))
         if not path.is_absolute():
-            path = Path(str(row.get("directory", ""))) / path
+            path = directory / path
         matches += path.resolve() == source
     return matches == 1
 
