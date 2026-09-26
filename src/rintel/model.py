@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .identity import canonical_node_id, identity_schema_version
+
 # ---------------------------------------------------------------------------
 # Canonical node kinds (spec §7).  Language-native extras are allowed; the
 # canonical set is the *minimum* every projection must understand.
@@ -65,7 +67,13 @@ class Node:
 
     @property
     def canonical_id(self) -> str:
-        return f"node:{self.kind}:{self.qname}"
+        return canonical_node_id(kind=self.kind, qname=self.qname,
+                                 language=self.language, path=self.path,
+                                 meta=self.meta)
+
+    @property
+    def identity_schema_version(self) -> str:
+        return identity_schema_version(self.kind)
 
 
 @dataclass

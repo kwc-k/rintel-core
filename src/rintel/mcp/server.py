@@ -502,6 +502,7 @@ def _search_in_lane(lane: str, q: str, kind: str | None, file: str | None,
         if language and (n.get("language") or "").lower() != language.lower():
             continue
         rows.append({
+            "lane": lane,
             "canonical_id": n["canonical_symbol_id"],
             "name": name, "kind": "function/symbol", "file": f,
             "line": (n.get("source_range") or {}).get("start_line"),
@@ -626,8 +627,9 @@ def t_search_symbols(p: dict) -> dict:
     parts = "; ".join(f"{k}:{v}" for k, v in src_counts.items() if v)
     return {
         "status": "ok", "count": len(rows),
-        "summary": f"{len(rows)} symbol(s) matched ({parts}); use canonical_id for "
-                   f"get_symbol/query_topology.",
+        "summary": f"{len(rows)} symbol(s) matched ({parts}); published canonical_id "
+                   "is CURRENT Store identity; reference-lane IDs are for reference "
+                   "drilldown only (get_symbol/query_topology).",
         "matches": rows[:limit],
         "sources": {k: v for k, v in src_counts.items() if v},
         "next": ["get_symbol", "query_topology", "explain_evidence"],
@@ -2708,7 +2710,34 @@ def mcp_call(tool: str, args: object) -> dict:
     issues = contract_issues(tool, spec, clean)
     if issues:
         return contract_fail(tool, issues)
-    return TOOLS[tool][0](clean)
+    result = TOOLS[tool][0](clean)
+    if not isinstance(result, dict) or "error" in result:
+        return result
+    # Frozen analysis_tournament lanes use name-shaped reference IDs. Retain
+    # their legacy fields for compatibility, but never imply that they are
+    # bound to the current canonical Store merely because the field is named
+    # canonical_id in an older artifact.
+    if tool == "search_symbols":
+        for row in result.get("matches", []):
+            if row.get("lane") != "published":
+                row["identity_authority"] = "REFERENCE_UNBOUND"
+                row["canonical_id_is_current"] = False
+        if any(row.get("identity_authority") == "REFERENCE_UNBOUND"
+               for row in result.get("matches", [])):
+            result["identity_boundary"] = "reference IDs are not CURRENT canonical IDs"
+    elif tool == "get_symbol":
+        for hit in result.get("hits", []):
+            if hit.get("lane") != "published":
+                hit.setdefault("identity", {})["identity_authority"] = "REFERENCE_UNBOUND"
+                hit["identity"]["canonical_id_is_current"] = False
+    elif tool in {"query_topology", "find_path"} and not clean.get("repo_id"):
+        result["identity_boundary"] = "REFERENCE_UNBOUND"
+        if tool == "query_topology":
+            for node in result.get("nodes", []):
+                node["canonical_id_is_current"] = False
+    elif tool == "query_flow":
+        result["identity_boundary"] = "REFERENCE_UNBOUND"
+    return result
 
 
 def t_classify_evidence_authority(p: dict) -> dict:

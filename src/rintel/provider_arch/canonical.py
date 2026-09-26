@@ -5,13 +5,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import json
+import re
 from typing import Any, Callable, Iterable
 
 from rintel.analysis.contract import Coverage, ExecutionModality, TargetResolution, TruthClass
 
 from .contract import EvidenceCandidate
+from rintel.identity import canonical_provider_entity_id
 
 IdentityResolver = Callable[[str, EvidenceCandidate, str], str | None]
+
+
+class IdentityAdmissionError(RuntimeError):
+    """A candidate attempted to publish an unbound formal symbol identity."""
 
 
 class ConflictDecision(str, Enum):
@@ -109,7 +115,6 @@ class CanonicalizationResult:
 
 def strict_identity(value: str, candidate: EvidenceCandidate, role: str) -> str:
     """Accept only explicit Rintel canonical ids, never raw analyzer names."""
-    del role
     provider_prefix = candidate.provider_id.lower().replace("_", "-") + ":"
     lowered = value.lower()
     if value == candidate.provider_fact_id or lowered.startswith(provider_prefix):
@@ -122,6 +127,32 @@ def strict_identity(value: str, candidate: EvidenceCandidate, role: str) -> str:
     )
     if not lowered.startswith(canonical_prefixes):
         raise ValueError("identity was not resolved by Rintel canonical authority")
+    if value.startswith("node:"):
+        if not (re.fullmatch(r"node:[A-Z_]+:v2:[0-9a-f]{64}", value)
+                or re.fullmatch(r"node:(?:REPOSITORY|DIRECTORY|FILE|COMMIT):.+",
+                                value)):
+            raise IdentityAdmissionError(
+                "formal node identity requires symbol-identity/v2")
+        raw = candidate.witness.get("provider_local")
+        if not isinstance(raw, dict):
+            raise IdentityAdmissionError(
+                "formal node identity lacks Rintel-resolvable provider descriptor")
+        if role == "subject":
+            entities = [raw.get("subject")]
+        else:
+            obj = raw.get("object")
+            entities = ([obj["entity"]] if isinstance(obj, dict) and "entity" in obj
+                        else obj.get("candidates", []) if isinstance(obj, dict)
+                        else [])
+        try:
+            expected = {canonical_provider_entity_id(entity)
+                        for entity in entities if isinstance(entity, dict)}
+        except (KeyError, ValueError) as exc:
+            raise IdentityAdmissionError(
+                "provider descriptor cannot be bound to v2 identity") from exc
+        if value not in expected:
+            raise IdentityAdmissionError(
+                "formal node identity does not match Rintel-resolved descriptor")
     return value
 
 

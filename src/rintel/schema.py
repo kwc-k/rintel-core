@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   name TEXT NOT NULL,
   qname TEXT NOT NULL,
   language TEXT NOT NULL,
+  identity_schema_version TEXT NOT NULL DEFAULT 'symbol-identity/v1',
   path TEXT NOT NULL,
   start_line INTEGER, start_col INTEGER, end_line INTEGER, end_col INTEGER,
   meta_json TEXT NOT NULL DEFAULT '{}',
@@ -51,6 +52,8 @@ CREATE INDEX IF NOT EXISTS idx_nodes_qname ON nodes(repo_id, qname);
 CREATE INDEX IF NOT EXISTS idx_nodes_kind  ON nodes(repo_id, kind);
 CREATE INDEX IF NOT EXISTS idx_nodes_path  ON nodes(repo_id, path);
 CREATE INDEX IF NOT EXISTS idx_nodes_lang  ON nodes(repo_id, language);
+CREATE INDEX IF NOT EXISTS idx_nodes_legacy_lookup ON nodes
+  (repo_id, snapshot_id, kind, qname);
 
 CREATE TABLE IF NOT EXISTS edges (
   repo_id TEXT NOT NULL,

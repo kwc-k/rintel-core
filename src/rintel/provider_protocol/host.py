@@ -22,6 +22,7 @@ from rintel.provider_arch import (
     ProviderResult,
 )
 from rintel.evidence_authority import CanonicalStateRef, DEFAULT_ENGINE
+from rintel.identity import canonical_provider_entity_id
 
 from .model import (
     PROTOCOL_VERSION,
@@ -94,11 +95,10 @@ def _advertisement(wire: Mapping[str, Any]) -> ProviderAdvertisement:
 
 
 def _canonical_entity(entity: Mapping[str, Any]) -> str:
-    kind = str(entity["kind"]).upper()
-    qname = str(entity["qualified_name"]).strip()
-    if not qname:
-        raise ProtocolError("empty semantic qualified_name")
-    return f"node:{kind}:{qname}"
+    try:
+        return canonical_provider_entity_id(dict(entity))
+    except (KeyError, ValueError) as exc:
+        raise ProtocolError(f"provider entity identity unavailable: {exc}") from exc
 
 
 def _truth(basis: str) -> TruthClass:
@@ -112,10 +112,23 @@ def _truth(basis: str) -> TruthClass:
 def _candidate(raw: Mapping[str, Any], *, provider: ProviderAdvertisement,
                contract: AnalysisContract, coverage: Coverage) -> EvidenceCandidate:
     obj = raw["object"]
+    identity_boundary = None
     if "entity" in obj:
-        target: Any = _canonical_entity(obj["entity"])
-        resolution = TargetResolution.EXACT
-        object_is_identity = True
+        entity = obj["entity"]
+        if (str(entity["language"]).lower().startswith("fortran")
+                and raw["predicate"] in {"CALL", "REFERENCES"}):
+            # rpp/1 carries a provider-local target path but no proof that a
+            # particular FAC build target/module selected that definition.
+            # Keep the raw candidate as provenance, never publish a guessed
+            # exact cross-file Fortran target.
+            target = None
+            resolution = TargetResolution.UNKNOWN
+            object_is_identity = False
+            identity_boundary = "FORTRAN_TARGET_REQUIRES_BUILD_CONTEXT_BINDING"
+        else:
+            target = _canonical_entity(entity)
+            resolution = TargetResolution.EXACT
+            object_is_identity = True
     elif "candidates" in obj:
         target = [_canonical_entity(item) for item in obj["candidates"]]
         resolution = TargetResolution.CANDIDATE_SET if target else TargetResolution.UNKNOWN
@@ -150,7 +163,9 @@ def _candidate(raw: Mapping[str, Any], *, provider: ProviderAdvertisement,
         resolution=resolution,
         revision_input=contract.repo_snapshot,
         execution_modality=ExecutionModality(raw["claim"]["execution_modality"]),
-        witness={"provider_local": dict(raw), "provenance": provenance},
+        witness={"provider_local": dict(raw), "provenance": provenance,
+                 **({"identity_boundary": identity_boundary}
+                    if identity_boundary else {})},
         object_is_identity=object_is_identity,
     )
 

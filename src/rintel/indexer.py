@@ -34,7 +34,8 @@ from .evidence_authority import (
     envelope_from_wire,
 )
 from .eq0 import classify_unresolved
-from .identity import py_module_qname, ts_module_qname
+from .identity import (SYMBOL_IDENTITY_SCHEMA_VERSION, py_module_qname,
+                       ts_module_qname)
 from .model import (Callsite, EdgeSpec, ImportBinding, IncludeBinding, Node,
                     ParsedFile, Ref, REF_MODULE, REF_NAME, REF_QNAME)
 from .store import Store
@@ -117,7 +118,7 @@ class Indexer:
             "provider_version": self.provider_version,
             "provider_config_digest": self.provider_config_digest,
             "build_context_id": self.build_context_id,
-            "semantic_identity_schema_version": "1",
+            "semantic_identity_schema_version": SYMBOL_IDENTITY_SCHEMA_VERSION,
             "indexer_version": self.indexer_version,
             "authority_registry_version": DEFAULT_ENGINE.registry.version,
             "authority_rule_version": DEFAULT_ENGINE.rule_version,
@@ -302,6 +303,14 @@ class Indexer:
                 key for key, value in analysis_identity.items()
                 if previous_identity.get(key) != value
             }
+            # A key-schema transition cannot copy v1 rows into a v2 snapshot.
+            # Rebuild from source while keeping the published v1 snapshot and
+            # its evidence immutable until the new revision is atomic.
+            if "semantic_identity_schema_version" in identity_changes:
+                res.incremental = False
+                changed = files
+                res.changed_files = sorted(f[0] for f in files)
+                unchanged = []
             tick(15, "diff")
             res.files_unchanged = len(unchanged)
             if not changed and not identity_changes:
@@ -912,12 +921,12 @@ class Indexer:
         self.db.delete_evidence_all(self.repo_id, sid)
         self.db.delete_edges_all(self.repo_id, sid)
         nodes = self.db.all_nodes(self.repo_id, sid)
-        defs: dict[str, dict] = {}
+        defs: dict[str, list[dict]] = {}
         by_name: dict[str, dict[str, list[str]]] = {}
         file_nodes: dict[str, list[dict]] = {}
         langs_by_name: dict[str, set[str]] = {}
         for n in nodes:
-            defs[n["qname"]] = n
+            defs.setdefault(n["qname"], []).append(n)
             by_name.setdefault(n["path"], {}).setdefault(n["name"], []).append(n)
             file_nodes.setdefault(n["path"], []).append(n)
             langs_by_name.setdefault(n["name"], set()).add(n["language"])
@@ -949,12 +958,12 @@ class Indexer:
                        res: IndexResult) -> None:
         """Reconcile only resolution inputs owned by invalidated paths."""
         nodes = self.db.all_nodes(self.repo_id, sid)
-        defs: dict[str, dict] = {}
+        defs: dict[str, list[dict]] = {}
         by_name: dict[str, dict[str, list[dict]]] = {}
         file_nodes: dict[str, list[dict]] = {}
         langs_by_name: dict[str, set[str]] = {}
         for node in nodes:
-            defs[node["qname"]] = node
+            defs.setdefault(node["qname"], []).append(node)
             by_name.setdefault(node["path"], {}).setdefault(
                 node["name"], []).append(node)
             file_nodes.setdefault(node["path"], []).append(node)
@@ -1046,25 +1055,39 @@ class Indexer:
             confidence=pe["confidence"], meta=json.loads(pe["meta_json"]),
             evidence=self._edge_evidence(pe, "tree_sitter", pe["confidence"]))
 
+    @staticmethod
+    def _unique_def(defs: dict[str, list[dict]], qname: str,
+                    language: str | None = None,
+                    kind: str | None = None) -> dict | None:
+        candidates = [node for node in defs.get(qname, [])
+                      if (language is None or node["language"] == language)
+                      and (kind is None or node["kind"] == kind)]
+        return candidates[0] if len(candidates) == 1 else None
+
     def _resolve_ref(self, mode: str, value: str, file_path: str, defs: dict,
                      by_name: dict, imports_by_file: dict,
                      language: str | None = None) -> str | None:
         """Resolve a symbolic ref to a canonical node id, or None."""
+        if language is None:
+            adapter = adapter_for_path(file_path)
+            language = adapter.language if adapter is not None else None
+        def in_language(node: dict) -> bool:
+            return language is not None and node["language"] == language
         if mode == REF_QNAME:
-            n = defs.get(value)
-            return n["id"] if n else None
+            n = self._unique_def(defs, value, language)
+            return n["id"] if n and in_language(n) else None
         if mode == REF_MODULE:
-            n = defs.get(value)
-            if n and n["kind"] in ("MODULE", "PACKAGE"):
+            n = self._unique_def(defs, value, language)
+            if n and in_language(n) and n["kind"] in ("MODULE", "PACKAGE"):
                 return n["id"]
             return None
         # REF_NAME: same-file → imported → global-unique
-        cands: list[str] = []
+        cands: list[dict] = []
         for n in by_name.get(file_path, {}).get(value, []):
-            if language is None or n["language"] == language:
-                cands.append(n["qname"])
+            if in_language(n):
+                cands.append(n)
         if len(cands) == 1:
-            return defs[cands[0]]["id"]
+            return cands[0]["id"]
         if len(cands) > 1:
             return None  # ambiguous in-file
         for imp in imports_by_file.get(file_path, []):
@@ -1072,20 +1095,22 @@ class Indexer:
             if imp["local"] == value:
                 targets = names or [value]
                 for nm in targets:
-                    n = defs.get(f"{imp['module_qname']}.{nm}")
-                    if n and (language is None or n["language"] == language):
+                    n = self._unique_def(defs, f"{imp['module_qname']}.{nm}",
+                                         language)
+                    if n and in_language(n):
                         return n["id"]
             elif value in names:
-                n = defs.get(f"{imp['module_qname']}.{value}")
-                if n and (language is None or n["language"] == language):
+                n = self._unique_def(defs, f"{imp['module_qname']}.{value}",
+                                     language)
+                if n and in_language(n):
                     return n["id"]
-        unique: list[str] = []
+        unique: list[dict] = []
         for path, names in by_name.items():
             for n in names.get(value, []):
-                if language is None or n["language"] == language:
-                    unique.append(n["qname"])
+                if in_language(n):
+                    unique.append(n)
         if len(unique) == 1:
-            return defs[unique[0]]["id"]
+            return unique[0]["id"]
         return None
 
     def _resolve_callsite(self, cs: dict, defs: dict, by_name: dict,
@@ -1095,6 +1120,12 @@ class Indexer:
         callee = cs["callee"]
         cid = cs["id"]
         cs["_file_nodes"] = file_nodes.get(cs["file_path"], [])
+        adapter = adapter_for_path(cs["file_path"])
+        source_language = adapter.language if adapter is not None else None
+        def in_source_language(node: dict) -> bool:
+            # Name/qname agreement across languages is not ABI evidence.
+            return (source_language is not None
+                    and node["language"] == source_language)
         # 0) TS/JS relative-specifier candidates ("./payments".Foo -> payments.Foo)
         cands = json.loads(cs["candidates_json"])
         if cs["file_path"].endswith((".ts", ".tsx", ".js", ".jsx", ".mjs")):
@@ -1107,12 +1138,13 @@ class Indexer:
             cands = extra + cands
         # 1) adapter-proposed candidate qnames
         for cand in cands:
-            n = defs.get(cand)
-            if n:
+            n = self._unique_def(defs, cand, source_language)
+            if n and in_source_language(n):
                 self._emit_call(cs, n, "candidate", 0.9, sid)
                 return
         # 2) name fallback: same-file
-        same = by_name.get(cs["file_path"], {}).get(callee, [])
+        same = [n for n in by_name.get(cs["file_path"], {}).get(callee, [])
+                if in_source_language(n)]
         if len(same) == 1:
             self._emit_call(cs, same[0], "same_file", 0.95, sid)
             return
@@ -1123,7 +1155,8 @@ class Indexer:
             return
         # 3) include closure (C)
         for inc_file in include_closure.get(cs["file_path"], set()):
-            inc_defs = by_name.get(inc_file, {}).get(callee, [])
+            inc_defs = [n for n in by_name.get(inc_file, {}).get(callee, [])
+                        if in_source_language(n)]
             if len(inc_defs) == 1:
                 self._emit_call(cs, inc_defs[0], "included", 0.85, sid)
                 return
@@ -1135,13 +1168,14 @@ class Indexer:
                 if imp["local"] == callee and callee in names:
                     targets = [callee]
                 for nm in targets:
-                    n = defs.get(f"{imp['module_qname']}.{nm}")
-                    if n:
+                    n = self._unique_def(defs, f"{imp['module_qname']}.{nm}",
+                                         source_language)
+                    if n and in_source_language(n):
                         self._emit_call(cs, n, "imported", 0.9, sid)
                         return
         # 5) global unique name
         unique = [n for path, names in by_name.items()
-                  for n in names.get(callee, [])]
+                  for n in names.get(callee, []) if in_source_language(n)]
         if len(unique) == 1:
             self._emit_call(cs, unique[0], "global_unique", 0.7, sid)
             return
@@ -1194,7 +1228,7 @@ class Indexer:
             else:
                 ctor_q = target["qname"] + CTOR_SUFFIX.get(lang, ".__init__")
             ctor = self.db.node_by_qname(self.repo_id, sid, ctor_q)
-            if ctor:
+            if ctor and ctor["language"] == lang:
                 eid = self._add_call_edge(src_id, ctor["id"], cs, rule, conf, sid)
                 self.db.update_callsite(cs["id"], ctor["id"], "constructor",
                                         conf, eid)
@@ -1251,7 +1285,9 @@ class Indexer:
     def _resolve_import(self, imp: dict, defs: dict, imports_by_file: dict,
                         sid: str) -> None:
         target = self._module_node_for(imp, defs, imports_by_file)
-        src = defs.get(imp["src_qname"])
+        adapter = adapter_for_path(imp["file_path"])
+        src = self._unique_def(defs, imp["src_qname"],
+                               adapter.language if adapter else None)
         if target is None:
             self.db.set_import_external(imp["id"])
             return
@@ -1273,6 +1309,7 @@ class Indexer:
     def _module_node_for(self, imp: dict, defs: dict,
                          imports_by_file: dict) -> dict | None:
         mq = imp["module_qname"]
+        adapter = adapter_for_path(imp["file_path"])
         meta = json.loads(imp["meta_json"])
         candidates: list[str] = [mq]
         if meta.get("resolve") == "relative":
@@ -1280,8 +1317,9 @@ class Indexer:
         elif imp["file_path"].endswith(".go") or mq.count("/") > 0:
             candidates.append(mq.rsplit("/", 1)[-1])
         for c in candidates:
-            n = defs.get(c)
-            if n and n["kind"] in ("MODULE", "PACKAGE"):
+            n = self._unique_def(defs, c, adapter.language if adapter else None)
+            if (n and adapter is not None and n["language"] == adapter.language
+                    and n["kind"] in ("MODULE", "PACKAGE")):
                 return n
         return None
 
@@ -1299,7 +1337,7 @@ class Indexer:
     def _resolve_include(self, inc: dict, defs: dict, sid: str) -> None:
         target = self._resolve_include_target(inc["file_path"], inc["target"],
                                               defs)
-        src = defs.get(inc["file_path"])
+        src = self._unique_def(defs, inc["file_path"], kind="FILE")
         if target is None:
             self.db.set_include_external(inc["id"])
             return
@@ -1320,13 +1358,15 @@ class Indexer:
     def _resolve_include_target(self, imp_path: str, target: str,
                                 defs: dict) -> dict | None:
         cand = os.path.normpath(os.path.join(os.path.dirname(imp_path), target))
-        n = defs.get(cand)
+        n = self._unique_def(defs, cand, kind="FILE")
         if n and n["kind"] == "FILE":
             return n
         base = os.path.basename(target)
-        for q, node in defs.items():
-            if node["kind"] == "FILE" and os.path.basename(q) == base:
-                return node
+        matches = [node for q, rows in defs.items()
+                   if os.path.basename(q) == base
+                   for node in rows if node["kind"] == "FILE"]
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     # ------------------------------------------------------------------

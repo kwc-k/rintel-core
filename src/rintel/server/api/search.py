@@ -33,8 +33,13 @@ def search(q: str, repo_id: str, snapshot: str | None = None,
         if allowed is not None and r["kind"] not in allowed:
             continue
         seen.add(r["id"])
-        items.append({"id": r["id"], "kind": r["kind"], "name": r["name"],
+        items.append({"id": r["id"], "repo_id": repo_id,
+                      "snapshot_id": sid, "currentness": (
+                          "CURRENT" if sid == store.current_snapshot(repo_id)
+                          else "HISTORICAL"),
+                      "kind": r["kind"], "name": r["name"],
                       "qname": r["qname"], "language": r["language"],
+                      "identity_schema_version": r.get("identity_schema_version"),
                       "path": r["path"], "line": r["start_line"],
                       "start_line": r["start_line"],
                       "end_line": r["end_line"], "match": r["match"]})
